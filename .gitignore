@@ -1,0 +1,37 @@
+# Secrets and local configuration
+.env
+.env.local
+.env.*.local
+
+# Generated autoinstall (may embed secrets from .env)
+autoinstall.yaml
+.autoinstall.yaml.*
+
+# Ubuntu / autoinstall ISO images (multi-GB binaries)
+*.iso
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+ENV/
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build scratch under the project tree
+/tmp/
+/iso-build/
+/work/
