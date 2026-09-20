@@ -128,6 +128,36 @@ if ([string]::IsNullOrWhiteSpace($OutputIso)) {
 }
 $env:OUTPUT_ISO = $OutputIso
 
+# Resolve the host output path before passing it to Docker. An absolute Windows
+# path (for example G:\Samovar\ubuntu-samovar-amd64.iso) must not be appended
+# to the project directory or passed verbatim as a Linux path inside the
+# container.
+$OutputIsoIsAbsolute = [System.IO.Path]::IsPathRooted($OutputIso)
+if ($OutputIsoIsAbsolute) {
+    try {
+        $OutputIsoPath = [System.IO.Path]::GetFullPath($OutputIso)
+    } catch {
+        Write-Error "Error: invalid OUTPUT_ISO path '$OutputIso'."
+        exit 1
+    }
+
+    $OutputIsoName = Split-Path -Leaf -LiteralPath $OutputIsoPath
+    $OutputIsoDir = Split-Path -Parent -LiteralPath $OutputIsoPath
+    if ([string]::IsNullOrWhiteSpace($OutputIsoName) -or [string]::IsNullOrWhiteSpace($OutputIsoDir)) {
+        Write-Error "Error: OUTPUT_ISO must name an ISO file."
+        exit 1
+    }
+    if (-not (Test-Path -LiteralPath $OutputIsoDir)) {
+        New-Item -ItemType Directory -Path $OutputIsoDir -Force | Out-Null
+    }
+    $ContainerOutputIsoPath = "/output/$OutputIsoName"
+} else {
+    $OutputIsoPath = Join-Path $WorkDir $OutputIso
+    $OutputIsoName = Split-Path -Leaf -LiteralPath $OutputIsoPath
+    $OutputIsoDir = Split-Path -Parent -LiteralPath $OutputIsoPath
+    $ContainerOutputIsoPath = "/work/$OutputIso"
+}
+
 # Curated mirror candidate URLs
 function Get-IsoCandidateUrls([string]$targetArch, [string]$series, [string]$iso) {
     if ($targetArch -eq "amd64") {
@@ -483,9 +513,9 @@ trap - EXIT
 
     Write-Host "Building bootable ISO..."
 
-    $destIsoPath = Join-Path $WorkDir $OutputIso
-    if (Test-Path $destIsoPath) {
-        Remove-Item $destIsoPath -Force
+    $destIsoPath = $OutputIsoPath
+    if (Test-Path -LiteralPath $destIsoPath) {
+        Remove-Item -LiteralPath $destIsoPath -Force
     }
 
     $step2Script = @'
@@ -519,20 +549,20 @@ python3 /work/validate-autoinstall-iso.py \
 
 xorriso \
   -indev "/work/$ISO_NAME" \
-  -outdev "/work/$OUTPUT_ISO" \
+  -outdev "$OUTPUT_ISO_PATH" \
   -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
   -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
   -map /work/autoinstall.yaml /autoinstall.yaml \
   -boot_image any replay
 
 xorriso \
-  -indev "/work/$OUTPUT_ISO" \
+  -indev "$OUTPUT_ISO_PATH" \
   -find /autoinstall.yaml -exec report_lba -- \
   >/dev/null
 
 xorriso \
   -osirrox on \
-  -indev "/work/$OUTPUT_ISO" \
+  -indev "$OUTPUT_ISO_PATH" \
   -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
   -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
   -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
@@ -546,12 +576,19 @@ python3 /work/validate-autoinstall-iso.py \
 
     [System.IO.File]::WriteAllText($step2Path, ($step2Script -replace "`r`n", "`n"), $Utf8NoBom)
 
-    & docker run --rm `
-      -e "ISO_NAME=$IsoName" `
-      -e "OUTPUT_ISO=$OutputIso" `
-      -v "${DockerWorkDir}:/work" `
-      -w /work `
-      ubuntu:24.04 bash /work/.autoinstall-step2.tmp.sh
+    $dockerStep2Args = @(
+      "run", "--rm",
+      "-e", "ISO_NAME=$IsoName",
+      "-e", "OUTPUT_ISO_PATH=$ContainerOutputIsoPath",
+      "-v", "${DockerWorkDir}:/work",
+      "-w", "/work"
+    )
+    if ($OutputIsoIsAbsolute) {
+        $DockerOutputDir = $OutputIsoDir.Replace('\', '/')
+        $dockerStep2Args += @("-v", "${DockerOutputDir}:/output")
+    }
+    $dockerStep2Args += @("ubuntu:24.04", "bash", "/work/.autoinstall-step2.tmp.sh")
+    & docker @dockerStep2Args
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to build bootable ISO."
@@ -560,8 +597,8 @@ python3 /work/validate-autoinstall-iso.py \
 
     Write-Host "Writing SHA-256 checksum..."
     $shaPath = "${destIsoPath}.sha256"
-    $fileHash = (Get-FileHash -Path $destIsoPath -Algorithm SHA256).Hash.ToLower()
-    $shaEntry = "$fileHash  $OutputIso`n"
+    $fileHash = (Get-FileHash -LiteralPath $destIsoPath -Algorithm SHA256).Hash.ToLower()
+    $shaEntry = "$fileHash  $OutputIsoName`n"
     [System.IO.File]::WriteAllText($shaPath, $shaEntry, $Utf8NoBom)
 
     Write-Host ""

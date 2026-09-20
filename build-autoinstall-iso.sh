@@ -144,6 +144,33 @@ fi
 ISO_NAME="ubuntu-${UBUNTU_VERSION}-live-server-${ARCH}.iso"
 OUTPUT_ISO="${OUTPUT_ISO:-ubuntu-${UBUNTU_VERSION}-autoinstall-${ARCH}.iso}"
 
+# An absolute output path must be mounted separately in Docker. Git Bash users
+# may provide a Windows path (G:\Samovar\output.iso), so normalize it first.
+if [[ ("${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin*) \
+      && "$OUTPUT_ISO" =~ ^[A-Za-z]:[\\/].* ]] && command -v cygpath >/dev/null 2>&1; then
+  OUTPUT_ISO="$(cygpath -u "$OUTPUT_ISO")"
+fi
+
+OUTPUT_ISO_PATH="$WORK_DIR/$OUTPUT_ISO"
+OUTPUT_ISO_DIR="$(dirname "$OUTPUT_ISO_PATH")"
+OUTPUT_ISO_NAME="$(basename "$OUTPUT_ISO_PATH")"
+OUTPUT_ISO_CONTAINER_PATH="/work/$OUTPUT_ISO"
+DOCKER_OUTPUT_MOUNT=()
+if [[ "$OUTPUT_ISO" == /* ]]; then
+  OUTPUT_ISO_PATH="$OUTPUT_ISO"
+  OUTPUT_ISO_DIR="${OUTPUT_ISO%/*}"
+  [[ -n "$OUTPUT_ISO_DIR" ]] || OUTPUT_ISO_DIR="/"
+  OUTPUT_ISO_NAME="${OUTPUT_ISO##*/}"
+  OUTPUT_ISO_CONTAINER_PATH="/output/$OUTPUT_ISO_NAME"
+  mkdir -p "$OUTPUT_ISO_DIR"
+  DOCKER_OUTPUT_DIR="$OUTPUT_ISO_DIR"
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]] && command -v cygpath >/dev/null 2>&1; then
+    DOCKER_OUTPUT_DIR="$(cygpath -m "$OUTPUT_ISO_DIR")"
+  fi
+  DOCKER_OUTPUT_MOUNT=(-v "$DOCKER_OUTPUT_DIR:/output")
+fi
+OUTPUT_ISO_CHECKSUM_PATH="${OUTPUT_ISO_PATH}.sha256"
+
 # ---------------------------------------------------------------------------
 # ISO download mirror selection
 #
@@ -491,12 +518,13 @@ docker run --rm \
 
 echo "Building bootable ISO..."
 
-rm -f "$WORK_DIR/$OUTPUT_ISO"
+rm -f "$OUTPUT_ISO_PATH"
 
 docker run --rm \
   -e ISO_NAME="$ISO_NAME" \
-  -e OUTPUT_ISO="$OUTPUT_ISO" \
+  -e OUTPUT_ISO_PATH="$OUTPUT_ISO_CONTAINER_PATH" \
   -v "$DOCKER_WORK_DIR:/work" \
+  "${DOCKER_OUTPUT_MOUNT[@]}" \
   ubuntu:24.04 bash -euc '
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xorriso python3 python3-yaml >/dev/null
@@ -525,20 +553,20 @@ docker run --rm \
 
     xorriso \
       -indev "/work/$ISO_NAME" \
-      -outdev "/work/$OUTPUT_ISO" \
+      -outdev "$OUTPUT_ISO_PATH" \
       -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
       -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
       -map /work/autoinstall.yaml /autoinstall.yaml \
       -boot_image any replay
 
     xorriso \
-      -indev "/work/$OUTPUT_ISO" \
+      -indev "$OUTPUT_ISO_PATH" \
       -find /autoinstall.yaml -exec report_lba -- \
       >/dev/null
 
     xorriso \
       -osirrox on \
-      -indev "/work/$OUTPUT_ISO" \
+      -indev "$OUTPUT_ISO_PATH" \
       -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
       -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
       -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
@@ -552,20 +580,20 @@ docker run --rm \
 
 echo "Writing SHA-256 checksum..."
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$WORK_DIR" && sha256sum "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
+  (cd "$OUTPUT_ISO_DIR" && sha256sum "$OUTPUT_ISO_NAME" > "${OUTPUT_ISO_NAME}.sha256")
 elif command -v shasum >/dev/null 2>&1; then
-  (cd "$WORK_DIR" && shasum -a 256 "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
+  (cd "$OUTPUT_ISO_DIR" && shasum -a 256 "$OUTPUT_ISO_NAME" > "${OUTPUT_ISO_NAME}.sha256")
 elif command -v certutil.exe >/dev/null 2>&1; then
-  (cd "$WORK_DIR" && certutil.exe -hashfile "$OUTPUT_ISO" SHA256 | awk 'NR==2 {print tolower($0) "  '"$OUTPUT_ISO"'"}' > "${OUTPUT_ISO}.sha256")
+  (cd "$OUTPUT_ISO_DIR" && certutil.exe -hashfile "$OUTPUT_ISO_NAME" SHA256 | awk 'NR==2 {print tolower($0) "  '"$OUTPUT_ISO_NAME"'"}' > "${OUTPUT_ISO_NAME}.sha256")
 elif command -v openssl >/dev/null 2>&1; then
-  (cd "$WORK_DIR" && openssl dgst -sha256 -r "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
+  (cd "$OUTPUT_ISO_DIR" && openssl dgst -sha256 -r "$OUTPUT_ISO_NAME" > "${OUTPUT_ISO_NAME}.sha256")
 fi
 
 echo
 echo "Done:"
-echo "  $WORK_DIR/$OUTPUT_ISO"
-if [[ -f "$WORK_DIR/${OUTPUT_ISO}.sha256" ]]; then
-  echo "  $WORK_DIR/${OUTPUT_ISO}.sha256"
+echo "  $OUTPUT_ISO_PATH"
+if [[ -f "$OUTPUT_ISO_CHECKSUM_PATH" ]]; then
+  echo "  $OUTPUT_ISO_CHECKSUM_PATH"
 fi
 echo
 echo "Write it to a USB drive with Balena Etcher, Rufus, or Raspberry Pi Imager."

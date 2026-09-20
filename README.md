@@ -53,7 +53,7 @@ Supported variables (see `.env.example`):
 | `ARCH` | Target CPU architecture: `amd64` (default, x86_64) or `arm64` (aarch64). Aliases: `x86_64`/`x64`, `aarch64`/`arm` |
 | `ISO_MIRROR` | Source ISO download: `auto` (default, speed-test CD mirrors), `default` (Canonical only), base mirror URL, or full `.iso` URL |
 | `ISO_URL` | Full source ISO URL (overrides `ISO_MIRROR`) |
-| `OUTPUT_ISO` | Output ISO filename (default `ubuntu-${UBUNTU_VERSION}-autoinstall-${ARCH}.iso`) |
+| `OUTPUT_ISO` | Output ISO filename or absolute host path (default `ubuntu-${UBUNTU_VERSION}-autoinstall-${ARCH}.iso`) |
 | `HOSTNAME` / `TARGET_HOSTNAME` | Target hostname (from `.env` or `TARGET_HOSTNAME`; shell `HOSTNAME` alone is ignored) |
 | `USERNAME` | Linux username |
 | `PASSWORD` | Console password |
