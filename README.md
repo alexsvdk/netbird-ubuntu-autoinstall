@@ -30,7 +30,7 @@ This kit builds an Ubuntu Server 24.04.4 ISO that:
 
 ## Requirements
 
-- macOS or Linux
+- macOS, Linux, or Windows 10/11
 - Docker Desktop / Docker Engine
 - about 8 GB free disk space
 - Ethernet on the target server
@@ -94,9 +94,20 @@ Official country mirrors use `http://XX.archive.ubuntu.com/ubuntu` (Launchpad mi
 
 ## Build
 
+**macOS / Linux / Windows (Git Bash or WSL):**
 ```bash
 chmod +x build-autoinstall-iso.sh
 ./build-autoinstall-iso.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+.\build-autoinstall-iso.ps1
+```
+
+**Windows (CMD / Command Prompt / Double-click):**
+```cmd
+build-autoinstall-iso.bat
 ```
 
 The script loads `.env` if present, then downloads the official Ubuntu Server ISO for the chosen `ARCH` if it is not already in the project directory.

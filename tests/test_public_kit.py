@@ -37,6 +37,8 @@ class PublicKitTests(unittest.TestCase):
             ".env.example",
             ".gitignore",
             "build-autoinstall-iso.sh",
+            "build-autoinstall-iso.ps1",
+            "build-autoinstall-iso.bat",
             "render-autoinstall.py",
             "patch-grub.py",
             "validate-autoinstall-iso.py",
@@ -141,6 +143,34 @@ class PublicKitTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_build_script_powershell_syntax(self) -> None:
+        ps1 = ROOT / "build-autoinstall-iso.ps1"
+        self.assertTrue(ps1.is_file())
+        bat = ROOT / "build-autoinstall-iso.bat"
+        self.assertTrue(bat.is_file())
+
+        ps_cmd = None
+        for cmd in ("pwsh", "powershell"):
+            try:
+                subprocess.run([cmd, "-v"], check=True, capture_output=True)
+                ps_cmd = cmd
+                break
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                continue
+
+        if ps_cmd:
+            check_script = (
+                f"$errs = @(); [System.Management.Automation.Language.Parser]::ParseFile('{ps1}', [ref]$null, [ref]$errs); "
+                "if ($errs.Count -gt 0) { exit 1 } else { exit 0 }"
+            )
+            result = subprocess.run(
+                [ps_cmd, "-Command", check_script],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 if __name__ == "__main__":

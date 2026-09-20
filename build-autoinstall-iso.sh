@@ -3,6 +3,17 @@ set -euo pipefail
 
 WORK_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Windows / Git Bash / MSYS2 path compatibility for Docker volume mounts
+DOCKER_WORK_DIR="$WORK_DIR"
+if [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "cygwin" ]]; then
+  export MSYS_NO_PATHCONV=1
+  if command -v cygpath >/dev/null 2>&1; then
+    DOCKER_WORK_DIR="$(cygpath -m "$WORK_DIR")"
+  else
+    DOCKER_WORK_DIR="$(cd "$WORK_DIR" && pwd -W 2>/dev/null || echo "$WORK_DIR")"
+  fi
+fi
+
 # Space-delimited list of keys that appeared in .env (even with empty values).
 # Used so shell-pre-set HOSTNAME (macOS/Linux) does not silently skip the prompt.
 ENV_FILE_KEYS=" "
@@ -364,13 +375,16 @@ export PASSWORD
 
 if ! configured SSH_PUBLIC_KEY; then
   DEFAULT_SSH_KEY=""
-  if [[ -f "$HOME/.ssh/id_ed25519.pub" ]]; then
-    DEFAULT_SSH_KEY="$(cat "$HOME/.ssh/id_ed25519.pub")"
-  elif [[ -f "$HOME/.ssh/id_ecdsa.pub" ]]; then
-    DEFAULT_SSH_KEY="$(cat "$HOME/.ssh/id_ecdsa.pub")"
-  elif [[ -f "$HOME/.ssh/id_rsa.pub" ]]; then
-    DEFAULT_SSH_KEY="$(cat "$HOME/.ssh/id_rsa.pub")"
-  fi
+  for ssh_dir in "$HOME/.ssh" "${USERPROFILE:-}/.ssh"; do
+    [[ -n "$ssh_dir" && -d "$ssh_dir" ]] || continue
+    if [[ -z "$DEFAULT_SSH_KEY" && -f "$ssh_dir/id_ed25519.pub" ]]; then
+      DEFAULT_SSH_KEY="$(cat "$ssh_dir/id_ed25519.pub")"
+    elif [[ -z "$DEFAULT_SSH_KEY" && -f "$ssh_dir/id_ecdsa.pub" ]]; then
+      DEFAULT_SSH_KEY="$(cat "$ssh_dir/id_ecdsa.pub")"
+    elif [[ -z "$DEFAULT_SSH_KEY" && -f "$ssh_dir/id_rsa.pub" ]]; then
+      DEFAULT_SSH_KEY="$(cat "$ssh_dir/id_rsa.pub")"
+    fi
+  done
 
   if [[ -n "$DEFAULT_SSH_KEY" ]]; then
     echo "Found SSH public key:"
@@ -458,7 +472,7 @@ docker run --rm \
   -e ALLOWED_SIGNERS="${ALLOWED_SIGNERS:-}" \
   -e SSH_PUBLIC_KEYS="${SSH_PUBLIC_KEYS:-$SSH_PUBLIC_KEY}" \
   -e SUDO_NOPASSWD="${SUDO_NOPASSWD:-true}" \
-  -v "$WORK_DIR:/work" \
+  -v "$DOCKER_WORK_DIR:/work" \
   -w /work \
   ubuntu:24.04 bash -euc '
     apt-get update -qq
@@ -482,7 +496,7 @@ rm -f "$WORK_DIR/$OUTPUT_ISO"
 docker run --rm \
   -e ISO_NAME="$ISO_NAME" \
   -e OUTPUT_ISO="$OUTPUT_ISO" \
-  -v "$WORK_DIR:/work" \
+  -v "$DOCKER_WORK_DIR:/work" \
   ubuntu:24.04 bash -euc '
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xorriso python3 python3-yaml >/dev/null
@@ -532,6 +546,10 @@ if command -v sha256sum >/dev/null 2>&1; then
   (cd "$WORK_DIR" && sha256sum "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
 elif command -v shasum >/dev/null 2>&1; then
   (cd "$WORK_DIR" && shasum -a 256 "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
+elif command -v certutil.exe >/dev/null 2>&1; then
+  (cd "$WORK_DIR" && certutil.exe -hashfile "$OUTPUT_ISO" SHA256 | awk 'NR==2 {print tolower($0) "  '"$OUTPUT_ISO"'"}' > "${OUTPUT_ISO}.sha256")
+elif command -v openssl >/dev/null 2>&1; then
+  (cd "$WORK_DIR" && openssl dgst -sha256 -r "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
 fi
 
 echo
