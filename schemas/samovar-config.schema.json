@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/alexsvdk/netbird-ubuntu-autoinstall/schemas/samovar-config.schema.json",
+  "title": "SamovarConfig",
+  "description": "Configuration schema for the Samovar Autoinstall recovery/personalisation payload. Maximum file size is 4 MiB (enforced at runtime, not here).",
+  "type": "object",
+  "required": ["schema", "target", "generation", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "description": "Schema version. Must be 1.",
+      "type": "integer",
+      "const": 1
+    },
+    "target": {
+      "description": "Target identifier. Must be 'samovar'.",
+      "type": "string",
+      "const": "samovar"
+    },
+    "generation": {
+      "description": "Monotonically increasing generation counter (YYYYMMDDNN format recommended). Monotonic enforcement is done at runtime.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "description": "ISO 8601 datetime string indicating when this config was created.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "wifi": {
+      "description": "Optional Wi-Fi network configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["networks"],
+      "properties": {
+        "mode": {
+          "description": "Whether to merge new networks into existing netplan config or replace it entirely.",
+          "type": "string",
+          "enum": ["merge", "replace"],
+          "default": "merge"
+        },
+        "networks": {
+          "description": "List of Wi-Fi networks to configure.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ssid", "password"],
+            "additionalProperties": false,
+            "properties": {
+              "ssid": {
+                "description": "Wi-Fi SSID.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "password": {
+                "description": "WPA2 pre-shared key.",
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 63
+              },
+              "hidden": {
+                "description": "Whether the network is hidden (does not broadcast SSID).",
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "netbird": {
+      "description": "Optional NetBird VPN configuration.",
+      "type": "object",
+      "required": ["profile", "management_url", "setup_key"],
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "description": "Human-readable profile name used to label the NetBird connection.",
+          "type": "string",
+          "minLength": 1
+        },
+        "management_url": {
+          "description": "NetBird management server URL. Must use HTTPS.",
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "setup_key": {
+          "description": "One-off or reusable NetBird setup key.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "mihomo": {
+      "description": "Optional Mihomo (Clash Meta) proxy configuration.",
+      "type": "object",
+      "required": ["enabled", "config"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Whether to install and start Mihomo.",
+          "type": "boolean"
+        },
+        "config": {
+          "description": "Mihomo/Clash configuration object written verbatim to config.yaml.",
+          "type": "object",
+          "required": ["mode", "mixed-port", "proxies", "proxy-groups", "rules"],
+          "properties": {
+            "mode": {
+              "description": "Clash routing mode (e.g. 'rule', 'global', 'direct').",
+              "type": "string"
+            },
+            "mixed-port": {
+              "description": "HTTP + SOCKS5 mixed proxy port.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "proxies": {
+              "description": "List of proxy server definitions.",
+              "type": "array"
+            },
+            "proxy-groups": {
+              "description": "List of proxy group definitions.",
+              "type": "array"
+            },
+            "rules": {
+              "description": "List of routing rules.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

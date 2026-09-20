@@ -1,0 +1,17 @@
+# Direct mode: standard Docker bridge, direct Russian egress
+# No proxy, no VPN. Use for containers that need direct network access.
+#
+# Suitable for:
+#   - services that communicate with Russian infrastructure
+#   - internal-only services with no external network requirements
+#   - services where proxy overhead is undesirable
+#
+# Usage:
+#   cp direct.compose.yml docker-compose.yml
+#   docker compose up -d
+services:
+  app:
+    image: your-image:latest
+    restart: unless-stopped
+    # No special network configuration needed
+    # network_mode: bridge (default)

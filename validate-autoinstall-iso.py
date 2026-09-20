@@ -52,25 +52,65 @@ def validate_yaml(path: Path) -> None:
             fail(f"write_files[{index}] requires string path and content values.")
 
     files = {entry["path"]: entry["content"] for entry in write_files}
-    bootstrap = files.get("/usr/local/sbin/netbird-enroll.sh", "")
-    if "netbird up --setup-key" not in bootstrap:
-        fail("NetBird enrollment script does not pass the setup key to netbird up.")
-    if "/var/log/netbird-enroll.log" not in bootstrap:
-        fail("NetBird enrollment script does not keep a diagnostic log.")
-    if '"log-driver": "local"' not in bootstrap or '"max-size": "10m"' not in bootstrap or '"max-file": "10"' not in bootstrap:
-        fail("Docker logging is not configured with a 100 MiB per-container rotation limit.")
-    if "SystemMaxUse=90M" not in bootstrap or "SystemMaxFileSize=8M" not in bootstrap:
-        fail("systemd-journald is not configured to stay below approximately 100 MiB.")
-    service = files.get("/etc/systemd/system/netbird-enroll.service", "")
-    if "Restart=on-failure" not in service or "StartLimitIntervalSec=0" not in service:
-        fail("NetBird provisioner is not configured to retry failed attempts.")
-    network = require_mapping(autoinstall.get("network"), "autoinstall.network")
-    ethernets = require_mapping(network.get("ethernets"), "autoinstall.network.ethernets")
-    ethernet = require_mapping(ethernets.get("all-en"), "autoinstall.network.ethernets.all-en")
-    dhcp_overrides = require_mapping(ethernet.get("dhcp4-overrides"), "autoinstall network DHCP overrides")
-    nameservers = require_mapping(ethernet.get("nameservers"), "autoinstall network nameservers")
-    if dhcp_overrides.get("use-dns") is not False or nameservers.get("addresses") != ["1.1.1.1", "8.8.8.8"]:
-        fail("autoinstall network must override the broken DHCP DNS server.")
+    is_samovar = (
+        "/usr/local/sbin/samovar-provision.sh" in files
+        or autoinstall.get("identity", {}).get("hostname") == "samovar"
+    )
+
+    if not is_samovar:
+        # Generic mode contract
+        bootstrap = files.get("/usr/local/sbin/netbird-enroll.sh", "")
+        if "netbird up --setup-key" not in bootstrap:
+            fail("NetBird enrollment script does not pass the setup key to netbird up.")
+        if "/var/log/netbird-enroll.log" not in bootstrap:
+            fail("NetBird enrollment script does not keep a diagnostic log.")
+        if '"log-driver": "local"' not in bootstrap or '"max-size": "10m"' not in bootstrap or '"max-file": "10"' not in bootstrap:
+            fail("Docker logging is not configured with a 100 MiB per-container rotation limit.")
+        if "SystemMaxUse=90M" not in bootstrap or "SystemMaxFileSize=8M" not in bootstrap:
+            fail("systemd-journald is not configured to stay below approximately 100 MiB.")
+        service = files.get("/etc/systemd/system/netbird-enroll.service", "")
+        if "Restart=on-failure" not in service or "StartLimitIntervalSec=0" not in service:
+            fail("NetBird provisioner is not configured to retry failed attempts.")
+        network = require_mapping(autoinstall.get("network"), "autoinstall.network")
+        ethernets = require_mapping(network.get("ethernets"), "autoinstall.network.ethernets")
+        ethernet = require_mapping(ethernets.get("all-en"), "autoinstall.network.ethernets.all-en")
+        dhcp_overrides = require_mapping(ethernet.get("dhcp4-overrides"), "autoinstall network DHCP overrides")
+        nameservers = require_mapping(ethernet.get("nameservers"), "autoinstall network nameservers")
+        if dhcp_overrides.get("use-dns") is not False or nameservers.get("addresses") != ["1.1.1.1", "8.8.8.8"]:
+            fail("autoinstall network must override the broken DHCP DNS server.")
+    else:
+        # Samovar mode contract (spec §4, §9, §10, §11, §12, §16)
+        storage_str = yaml.safe_dump(autoinstall.get("storage", {}))
+        if "largest" in storage_str:
+            fail("Samovar storage must not use size: largest matching.")
+        for serial in ("50026B7683695BFE", "TD2023102401304", "WCC3F1336131"):
+            if serial not in storage_str:
+                fail(f"Samovar storage missing required disk serial: {serial}")
+
+        provision = files.get("/usr/local/sbin/samovar-provision.sh", "")
+        if not provision:
+            fail("Samovar autoinstall must write /usr/local/sbin/samovar-provision.sh")
+        if '"log-driver": "local"' not in provision or '"max-size": "10m"' not in provision or '"max-file": "10"' not in provision:
+            fail("Docker logging is not configured with bounded rotation in samovar-provision.sh.")
+        if "SystemMaxUse=90M" not in provision or "SystemMaxFileSize=8M" not in provision:
+            fail("systemd-journald size limits missing in samovar-provision.sh.")
+
+        provision_svc = files.get("/etc/systemd/system/samovar-provision.service", "")
+        if "Restart=on-failure" not in provision_svc or "StartLimitIntervalSec=0" not in provision_svc:
+            fail("Samovar provisioner service must retry on failure.")
+
+        # Setup key must NOT be embedded in any write_files in Samovar mode
+        for path, content in files.items():
+            if "netbird up --setup-key" in content:
+                fail(f"Plaintext setup key passed to netbird up in {path} — forbidden in Samovar mode.")
+
+        network = require_mapping(autoinstall.get("network"), "autoinstall.network")
+        ethernets = require_mapping(network.get("ethernets", {}), "autoinstall.network.ethernets")
+        if "lan0" not in ethernets:
+            fail("Samovar network must contain lan0 interface.")
+        wifis = require_mapping(network.get("wifis", {}), "autoinstall.network.wifis")
+        if "wifi0" not in wifis:
+            fail("Samovar network must contain wifi0 interface.")
 
 
 def validate_grub(path: Path) -> None:

@@ -1,0 +1,24 @@
+[Unit]
+Description=Mihomo Proxy Service
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/MetaCubeX/mihomo
+
+[Service]
+Type=simple
+User=mihomo
+Group=mihomo
+Restart=on-failure
+RestartSec=5s
+ExecStart=/usr/local/bin/mihomo -f /etc/mihomo/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+LimitNOFILE=65535
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/mihomo /var/lib/mihomo
+
+[Install]
+WantedBy=multi-user.target

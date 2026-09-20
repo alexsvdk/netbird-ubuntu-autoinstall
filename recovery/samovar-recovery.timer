@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry Samovar Recovery on staging presence
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=samovar-recovery.service
+
+[Install]
+WantedBy=timers.target

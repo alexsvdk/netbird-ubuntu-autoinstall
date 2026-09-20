@@ -1,0 +1,27 @@
+# Proxy mode: HTTP/SOCKS proxy via Mihomo
+# Container traffic routed through Mihomo proxy on host.
+#
+# Mihomo must be running on the host and listening on 127.0.0.1:7890.
+# host.docker.internal resolves to the Docker host gateway IP.
+#
+# This mode does NOT require NET_ADMIN or TUN. The container uses a
+# standard bridge network and explicitly addresses the proxy.
+#
+# Management plane (SSH, NetBird) on the host is unaffected.
+#
+# Usage:
+#   cp proxy.compose.yml docker-compose.yml
+#   docker compose up -d
+services:
+  app:
+    image: your-image:latest
+    restart: unless-stopped
+    environment:
+      - HTTP_PROXY=http://host.docker.internal:7890
+      - HTTPS_PROXY=http://host.docker.internal:7890
+      - ALL_PROXY=socks5://host.docker.internal:7890
+      - http_proxy=http://host.docker.internal:7890
+      - https_proxy=http://host.docker.internal:7890
+      - all_proxy=socks5://host.docker.internal:7890
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

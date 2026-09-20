@@ -1,0 +1,20 @@
+#!/bin/sh
+# proxy-run <command...>
+#
+# Runs a command with Mihomo proxy environment variables set.
+# Does NOT change global routes or system-wide proxy settings.
+# The proxy is scoped strictly to the child process.
+#
+# Usage examples:
+#   proxy-run curl https://example.com
+#   proxy-run pip install torch
+#   proxy-run wget https://huggingface.co/...
+
+export HTTP_PROXY="http://127.0.0.1:7890"
+export HTTPS_PROXY="http://127.0.0.1:7890"
+export ALL_PROXY="socks5://127.0.0.1:7890"
+export http_proxy="$HTTP_PROXY"
+export https_proxy="$HTTPS_PROXY"
+export all_proxy="$ALL_PROXY"
+
+exec "$@"

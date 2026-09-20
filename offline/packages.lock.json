@@ -1,0 +1,52 @@
+{
+  "packages": {
+    "_comment": "Locked package list for offline bootstrap. Populate via: apt-cache show <pkg> on Ubuntu 26.04 amd64",
+    "_format": "1",
+    "sources": [
+      {
+        "uri": "http://mirror.yandex.ru/ubuntu",
+        "suite": "noble",
+        "priority": 1
+      },
+      {
+        "uri": "http://ru.archive.ubuntu.com/ubuntu",
+        "suite": "noble",
+        "priority": 2
+      },
+      {
+        "uri": "http://archive.ubuntu.com/ubuntu",
+        "suite": "noble",
+        "priority": 3
+      }
+    ],
+    "required": [
+      {"name": "openssh-server", "version": null, "arch": "amd64"},
+      {"name": "wpasupplicant", "version": null, "arch": "amd64"},
+      {"name": "iw", "version": null, "arch": "amd64"},
+      {"name": "firmware-iwlwifi", "version": null, "arch": "amd64"},
+      {"name": "docker.io", "version": null, "arch": "amd64"},
+      {"name": "docker-compose-v2", "version": null, "arch": "amd64"},
+      {"name": "ca-certificates", "version": null, "arch": "amd64"},
+      {"name": "curl", "version": null, "arch": "amd64"},
+      {"name": "git", "version": null, "arch": "amd64"},
+      {"name": "tmux", "version": null, "arch": "amd64"},
+      {"name": "ufw", "version": null, "arch": "amd64"},
+      {"name": "python3", "version": null, "arch": "amd64"},
+      {"name": "python3-yaml", "version": null, "arch": "amd64"},
+      {"name": "jq", "version": null, "arch": "amd64"},
+      {"name": "smartmontools", "version": null, "arch": "amd64"},
+      {"name": "btop", "version": null, "arch": "amd64"},
+      {"name": "nvtop", "version": null, "arch": "amd64"},
+      {"name": "unattended-upgrades", "version": null, "arch": "amd64"}
+    ],
+    "optional_large": [
+      {"name": "nvidia-driver-560", "version": null, "arch": "amd64", "comment": "Or ubuntu-drivers-recommended output"},
+      {"name": "nvidia-container-toolkit", "version": null, "arch": "amd64"}
+    ],
+    "netbird": {
+      "source": "https://pkgs.netbird.io/debian",
+      "mirror_yandex": null,
+      "comment": "No Yandex mirror available for NetBird. Bundle the .deb directly."
+    }
+  }
+}

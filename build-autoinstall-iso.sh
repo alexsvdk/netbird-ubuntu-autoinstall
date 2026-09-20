@@ -316,15 +316,29 @@ resolve_iso_url() {
   fi
 }
 
+# Detect Samovar mode
+SAMOVAR_MODE="${SAMOVAR_MODE:-}"
+if [[ -z "$SAMOVAR_MODE" && -f "$WORK_DIR/samovar-config.json" ]]; then
+  SAMOVAR_MODE="samovar"
+fi
+export SAMOVAR_MODE
+
+DEFAULT_HOSTNAME="friend-server"
+DEFAULT_USERNAME="server"
+if [[ "$SAMOVAR_MODE" == "samovar" ]]; then
+  DEFAULT_HOSTNAME="samovar"
+  DEFAULT_USERNAME="alex"
+fi
+
 if ! configured HOSTNAME; then
-  read -r -p "Hostname [friend-server]: " HOSTNAME
-  HOSTNAME="${HOSTNAME:-friend-server}"
+  read -r -p "Hostname [$DEFAULT_HOSTNAME]: " HOSTNAME
+  HOSTNAME="${HOSTNAME:-$DEFAULT_HOSTNAME}"
 fi
 export HOSTNAME
 
 if ! configured USERNAME; then
-  read -r -p "Linux username [server]: " USERNAME
-  USERNAME="${USERNAME:-server}"
+  read -r -p "Linux username [$DEFAULT_USERNAME]: " USERNAME
+  USERNAME="${USERNAME:-$DEFAULT_USERNAME}"
 fi
 export USERNAME
 
@@ -352,6 +366,8 @@ if ! configured SSH_PUBLIC_KEY; then
   DEFAULT_SSH_KEY=""
   if [[ -f "$HOME/.ssh/id_ed25519.pub" ]]; then
     DEFAULT_SSH_KEY="$(cat "$HOME/.ssh/id_ed25519.pub")"
+  elif [[ -f "$HOME/.ssh/id_ecdsa.pub" ]]; then
+    DEFAULT_SSH_KEY="$(cat "$HOME/.ssh/id_ecdsa.pub")"
   elif [[ -f "$HOME/.ssh/id_rsa.pub" ]]; then
     DEFAULT_SSH_KEY="$(cat "$HOME/.ssh/id_rsa.pub")"
   fi
@@ -371,10 +387,14 @@ if ! configured SSH_PUBLIC_KEY; then
 fi
 export SSH_PUBLIC_KEY
 
-[[ "$SSH_PUBLIC_KEY" == ssh-* ]] || {
-  echo "Error: the SSH public key should start with ssh-ed25519, ssh-rsa, etc."
+if ! [[ "$SSH_PUBLIC_KEY" =~ ^(ssh-|ecdsa-|sk-) ]]; then
+  echo "Error: the SSH public key should start with a valid OpenSSH key type (ssh-ed25519, ecdsa-sha2-nistp256, ssh-rsa, etc.)."
   exit 1
-}
+fi
+
+if [[ "$SAMOVAR_MODE" == "samovar" && -z "${NETBIRD_SETUP_KEY:-}" ]]; then
+  NETBIRD_SETUP_KEY="samovar-managed-via-config"
+fi
 
 if ! configured NETBIRD_SETUP_KEY; then
   read -r -s -p "NetBird ONE-OFF setup key: " NETBIRD_SETUP_KEY
@@ -433,10 +453,16 @@ docker run --rm \
   -e APT_MIRROR="$APT_MIRROR" \
   -e APT_SECURITY_MIRROR="$APT_SECURITY_MIRROR" \
   -e APT_FALLBACK="$APT_FALLBACK" \
+  -e SAMOVAR_MODE="${SAMOVAR_MODE:-}" \
+  -e SAMOVAR_CONFIG_FILE="${SAMOVAR_CONFIG_FILE:-samovar-config.json}" \
+  -e ALLOWED_SIGNERS="${ALLOWED_SIGNERS:-}" \
+  -e SSH_PUBLIC_KEYS="${SSH_PUBLIC_KEYS:-$SSH_PUBLIC_KEY}" \
+  -e SUDO_NOPASSWD="${SUDO_NOPASSWD:-true}" \
   -v "$WORK_DIR:/work" \
+  -w /work \
   ubuntu:24.04 bash -euc '
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml >/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema >/dev/null
 
     export PASSWORD_HASH
     PASSWORD_HASH="$(openssl passwd -6 "$PASSWORD")"
@@ -501,9 +527,21 @@ docker run --rm \
       /tmp/iso-build/embedded-grub.cfg
   '
 
+echo "Writing SHA-256 checksum..."
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$WORK_DIR" && sha256sum "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$WORK_DIR" && shasum -a 256 "$OUTPUT_ISO" > "${OUTPUT_ISO}.sha256")
+fi
+
 echo
 echo "Done:"
 echo "  $WORK_DIR/$OUTPUT_ISO"
+if [[ -f "$WORK_DIR/${OUTPUT_ISO}.sha256" ]]; then
+  echo "  $WORK_DIR/${OUTPUT_ISO}.sha256"
+fi
 echo
 echo "Write it to a USB drive with Balena Etcher, Rufus, or Raspberry Pi Imager."
-echo "After the server appears in NetBird, delete or revoke the one-off setup key."
+if [[ "$SAMOVAR_MODE" != "samovar" ]]; then
+  echo "After the server appears in NetBird, delete or revoke the one-off setup key."
+fi

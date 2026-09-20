@@ -92,6 +92,7 @@ class PublicKitTests(unittest.TestCase):
                 "NETBIRD_SETUP_KEY": "test-setup-key-not-real-00000000-0000-0000-0000-000000000000",
                 "ARCH": "amd64",
                 "APT_REGION": "auto",
+                "SAMOVAR_MODE": "generic",
             }
         )
         with tempfile.TemporaryDirectory() as tmp:

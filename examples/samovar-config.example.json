@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "target": "samovar",
+  "generation": 2026091901,
+  "created_at": "2026-09-19T21:00:00Z",
+  "wifi": {
+    "mode": "merge",
+    "networks": [
+      {"ssid": "MoscowHome", "password": "REPLACE_ME", "hidden": false},
+      {"ssid": "MoscowHome-5G", "password": "REPLACE_ME", "hidden": false}
+    ]
+  },
+  "netbird": {
+    "profile": "netbird-cloud",
+    "management_url": "https://api.netbird.io:443",
+    "setup_key": "REPLACE_WITH_ONE_OFF_KEY"
+  },
+  "mihomo": {
+    "enabled": true,
+    "config": {
+      "mode": "rule",
+      "mixed-port": 7890,
+      "allow-lan": false,
+      "external-controller": "127.0.0.1:9090",
+      "secret": "REPLACE_ME",
+      "proxies": [
+        {
+          "name": "example-proxy",
+          "type": "ss",
+          "server": "REPLACE_ME",
+          "port": 8388,
+          "cipher": "aes-256-gcm",
+          "password": "REPLACE_ME"
+        }
+      ],
+      "proxy-groups": [
+        {
+          "name": "auto",
+          "type": "url-test",
+          "proxies": ["example-proxy"],
+          "url": "https://www.gstatic.com/generate_204",
+          "interval": 300
+        }
+      ],
+      "rules": [
+        "GEOIP,RU,DIRECT",
+        "MATCH,auto"
+      ]
+    }
+  }
+}

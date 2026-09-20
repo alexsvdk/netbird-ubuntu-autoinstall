@@ -1,0 +1,15 @@
+[Unit]
+Description=Samovar Recovery Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=samovar-recovery
+
+[Install]
+WantedBy=multi-user.target

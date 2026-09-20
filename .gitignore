@@ -7,6 +7,18 @@
 autoinstall.yaml
 .autoinstall.yaml.*
 
+# Samovar private config and signatures (contain Wi-Fi passwords, NetBird keys, proxy credentials)
+samovar-config.json
+samovar-config.json.sig
+*.sig
+*.sha256
+
+# Offline bundle artifacts (large binaries, reproducible from lock files)
+offline/*.deb
+offline/*.tar.gz
+offline/packages/
+offline/images/
+
 # Ubuntu / autoinstall ISO images (multi-GB binaries)
 *.iso
 

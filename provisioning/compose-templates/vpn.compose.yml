@@ -1,0 +1,54 @@
+# Full TUN mode: all container traffic through Mihomo VPN sidecar
+#
+# The vpn sidecar holds the network namespace; app uses network_mode: service:vpn.
+#
+# Kill switch: if vpn sidecar fails or is unhealthy, app loses network access
+# immediately because they share the same network namespace.
+#
+# Requirements:
+#   - Place your Mihomo configuration at ./mihomo-vpn.yaml (relative to this file).
+#     The config must define a TUN interface and appropriate routing rules.
+#   - The host kernel must support TUN (/dev/net/tun).
+#
+# GPU pass-through: GPU devices are independent of the network namespace and
+# can be added directly to the app service (see commented block below).
+#
+# Port publishing: attach published ports to the vpn service, not to app.
+#
+# Usage:
+#   cp vpn.compose.yml docker-compose.yml
+#   # edit mihomo-vpn.yaml with your proxy nodes and rules
+#   docker compose up -d
+services:
+  vpn:
+    image: metacubex/mihomo:latest
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./mihomo-vpn.yaml:/root/.config/mihomo/config.yaml:ro
+    sysctls:
+      - net.ipv4.ip_forward=1
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  app:
+    image: your-image:latest
+    restart: unless-stopped
+    network_mode: service:vpn
+    depends_on:
+      vpn:
+        condition: service_healthy
+    # GPU devices can be passed independently of the network namespace:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

@@ -133,12 +133,24 @@ docker info --format '{{.LoggingDriver}}'
 journalctl --disk-usage
 ```
 
-## Tests (no full ISO build required)
-
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m unittest discover -s tests -v
+python3 -m pytest tests/ -v
 ```
+
+## Samovar Autoinstall (`samovar` server profile)
+
+This repository includes a specialized, hardened autoinstall target for the **`samovar`** home lab server.
+Features include:
+- **Disk mapping by exact serial numbers** (Kingston SSD, SBSSD, WD HDD) — no destructive size-based matching.
+- **Fail-closed preflight hardware verification** before any disk partitioning.
+- **Detached SSH-signed configuration** (`samovar-config.json` + `samovar-config.json.sig`).
+- **Emergency USB recovery agent** (`SAMOVARCFG` FAT32 drive) with transactional rollbacks and replay protection.
+- **Isolated host management plane** (SSH, NetBird, recovery operate directly; Mihomo proxy/TUN for workloads).
+- **Docker + NVIDIA RTX 3060 provisioning** with Compose templates for Direct, Proxy, and Full TUN egress.
+- **Per-interface firewall rules** (SSH strictly on `wt0`, `wifi0`, and `lan0`).
+
+For detailed end-to-end instructions, see **[INSTRUCTIONS.md](INSTRUCTIONS.md)** and the technical specification in [samovar-autoinstall-spec.md](samovar-autoinstall-spec.md).
 
 ## License
 

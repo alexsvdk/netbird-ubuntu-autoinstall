@@ -1,0 +1,3 @@
+# Trigger recovery agent when a block device with label SAMOVARCFG appears.
+# Handles hot-plug of the recovery USB drive (spec §8.2).
+SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SAMOVARCFG", TAG+="systemd", ENV{SYSTEMD_WANTS}+="samovar-recovery.service"

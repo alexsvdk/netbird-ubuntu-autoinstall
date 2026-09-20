@@ -1,3 +1,6 @@
 # Runtime for local tests and for reading render/validate scripts outside Docker.
 # The ISO build path installs python3-yaml inside a Docker container instead.
 PyYAML>=6.0
+jsonschema>=4.0
+pytest>=7.0
+

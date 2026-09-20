@@ -1,0 +1,14 @@
+[Unit]
+Description=Scan for Samovar Recovery USB on boot
+After=local-fs.target
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=samovar-recovery-scan
+
+[Install]
+WantedBy=multi-user.target
