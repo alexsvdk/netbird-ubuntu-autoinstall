@@ -100,6 +100,22 @@ class TestGrubValidation(unittest.TestCase):
             self.assertNotEqual(res.returncode, 0)
             self.assertIn("timeout", res.stderr)
 
+    def test_main_and_loopback_grub_configs_pass(self) -> None:
+        loopback = SAMPLE_VALID_GRUB.replace("set timeout=3\n\n", "")
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "autoinstall.yaml"
+            yaml_path.write_text(self._generic_yaml(), encoding="utf-8")
+            main_path = Path(td) / "grub.cfg"
+            main_path.write_text(SAMPLE_VALID_GRUB, encoding="utf-8")
+            loopback_path = Path(td) / "loopback.cfg"
+            loopback_path.write_text(loopback, encoding="utf-8")
+            res = subprocess.run(
+                [sys.executable, str(VALIDATE), str(yaml_path), str(main_path), str(loopback_path)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+
     def _generic_yaml(self) -> str:
         env = os.environ.copy()
         env.update(

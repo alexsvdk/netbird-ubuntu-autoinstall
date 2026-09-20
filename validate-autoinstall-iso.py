@@ -113,7 +113,7 @@ def validate_yaml(path: Path) -> None:
             fail("Samovar network must contain wifi0 interface.")
 
 
-def validate_grub(path: Path) -> None:
+def validate_grub(path: Path, *, require_timeout: bool = True) -> None:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as error:
@@ -131,15 +131,17 @@ def validate_grub(path: Path) -> None:
             fail(f"GRUB boot entry lacks autoinstall: {line.strip()}")
         if not re.search(r"(?:^|\s)fsck\.mode=skip(?:\s|$)", line):
             fail(f"GRUB boot entry lacks fsck.mode=skip: {line.strip()}")
-    if not any(re.match(r"^\s*set\s+timeout\s*=\s*3\s*$", line) for line in lines):
+    if require_timeout and not any(re.match(r"^\s*set\s+timeout\s*=\s*3\s*$", line) for line in lines):
         fail("GRUB timeout is not set to 3 seconds.")
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        fail("usage: validate-autoinstall-iso.py AUTOINSTALL_YAML GRUB_CFG")
+    if len(sys.argv) < 3:
+        fail("usage: validate-autoinstall-iso.py AUTOINSTALL_YAML GRUB_CFG [GRUB_CFG ...]")
     validate_yaml(Path(sys.argv[1]))
-    validate_grub(Path(sys.argv[2]))
+    for index, grub_path in enumerate(sys.argv[2:]):
+        # The main menu owns the timeout; loopback configs only own boot entries.
+        validate_grub(Path(grub_path), require_timeout=index == 0)
     print("Validation passed: embedded autoinstall YAML and GRUB configuration are valid.")
 
 

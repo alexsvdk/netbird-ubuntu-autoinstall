@@ -507,20 +507,27 @@ docker run --rm \
       -osirrox on \
       -indev "/work/$ISO_NAME" \
       -extract /boot/grub/grub.cfg /tmp/iso-build/grub.cfg \
+      -extract /boot/grub/loopback.cfg /tmp/iso-build/loopback.cfg \
       >/dev/null 2>&1
 
     python3 /work/patch-grub.py \
       /tmp/iso-build/grub.cfg \
       /tmp/iso-build/grub-patched.cfg
 
+    python3 /work/patch-grub.py \
+      /tmp/iso-build/loopback.cfg \
+      /tmp/iso-build/loopback-patched.cfg
+
     python3 /work/validate-autoinstall-iso.py \
       /work/autoinstall.yaml \
-      /tmp/iso-build/grub-patched.cfg
+      /tmp/iso-build/grub-patched.cfg \
+      /tmp/iso-build/loopback-patched.cfg
 
     xorriso \
       -indev "/work/$ISO_NAME" \
       -outdev "/work/$OUTPUT_ISO" \
       -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
+      -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
       -map /work/autoinstall.yaml /autoinstall.yaml \
       -boot_image any replay
 
@@ -534,11 +541,13 @@ docker run --rm \
       -indev "/work/$OUTPUT_ISO" \
       -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
       -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
+      -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
       >/dev/null 2>&1
 
     python3 /work/validate-autoinstall-iso.py \
       /tmp/iso-build/embedded-autoinstall.yaml \
-      /tmp/iso-build/embedded-grub.cfg
+      /tmp/iso-build/embedded-grub.cfg \
+      /tmp/iso-build/embedded-loopback.cfg
   '
 
 echo "Writing SHA-256 checksum..."

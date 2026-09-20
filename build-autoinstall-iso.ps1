@@ -20,13 +20,17 @@ if (-not $WorkDir) {
     $WorkDir = (Get-Location).Path
 }
 
+# Windows PowerShell 5.1 otherwise writes a UTF-8 BOM. A BOM before a shell
+# shebang is parsed as a command by bash and makes the build continue incorrectly.
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
 # Space-delimited / hash set of keys that appeared in .env
 $EnvFileKeys = @{}
 
 function Load-EnvFile([string]$path) {
     if (-not (Test-Path $path)) { return }
     Write-Host "Loading environment from $path"
-    $lines = [System.IO.File]::ReadAllLines($path, [System.Text.Encoding]::UTF8)
+    $lines = [System.IO.File]::ReadAllLines($path, $Utf8NoBom)
     foreach ($rawLine in $lines) {
         $line = $rawLine.Trim()
         if (-not $line -or $line.StartsWith("#")) { continue }
@@ -340,7 +344,7 @@ if (-not (Test-Configured "SSH_PUBLIC_KEY")) {
     )
     foreach ($p in $searchPaths) {
         if (-not [string]::IsNullOrWhiteSpace($p) -and (Test-Path $p)) {
-            $content = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8).Trim()
+            $content = [System.IO.File]::ReadAllText($p, $Utf8NoBom).Trim()
             if ($content) {
                 $defaultKey = $content
                 break
@@ -450,7 +454,7 @@ mv "$output" /work/autoinstall.yaml
 trap - EXIT
 '@
 
-    [System.IO.File]::WriteAllText($step1Path, ($step1Script -replace "`r`n", "`n"), [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($step1Path, ($step1Script -replace "`r`n", "`n"), $Utf8NoBom)
 
     & docker run --rm `
       -e "HOSTNAME=$Hostname" `
@@ -497,20 +501,27 @@ xorriso \
   -osirrox on \
   -indev "/work/$ISO_NAME" \
   -extract /boot/grub/grub.cfg /tmp/iso-build/grub.cfg \
+  -extract /boot/grub/loopback.cfg /tmp/iso-build/loopback.cfg \
   >/dev/null 2>&1
 
 python3 /work/patch-grub.py \
   /tmp/iso-build/grub.cfg \
   /tmp/iso-build/grub-patched.cfg
 
+python3 /work/patch-grub.py \
+  /tmp/iso-build/loopback.cfg \
+  /tmp/iso-build/loopback-patched.cfg
+
 python3 /work/validate-autoinstall-iso.py \
   /work/autoinstall.yaml \
-  /tmp/iso-build/grub-patched.cfg
+  /tmp/iso-build/grub-patched.cfg \
+  /tmp/iso-build/loopback-patched.cfg
 
 xorriso \
   -indev "/work/$ISO_NAME" \
   -outdev "/work/$OUTPUT_ISO" \
   -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
+  -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
   -map /work/autoinstall.yaml /autoinstall.yaml \
   -boot_image any replay
 
@@ -524,14 +535,16 @@ xorriso \
   -indev "/work/$OUTPUT_ISO" \
   -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
   -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
+  -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
   >/dev/null 2>&1
 
 python3 /work/validate-autoinstall-iso.py \
   /tmp/iso-build/embedded-autoinstall.yaml \
-  /tmp/iso-build/embedded-grub.cfg
+  /tmp/iso-build/embedded-grub.cfg \
+  /tmp/iso-build/embedded-loopback.cfg
 '@
 
-    [System.IO.File]::WriteAllText($step2Path, ($step2Script -replace "`r`n", "`n"), [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($step2Path, ($step2Script -replace "`r`n", "`n"), $Utf8NoBom)
 
     & docker run --rm `
       -e "ISO_NAME=$IsoName" `
@@ -549,7 +562,7 @@ python3 /work/validate-autoinstall-iso.py \
     $shaPath = "${destIsoPath}.sha256"
     $fileHash = (Get-FileHash -Path $destIsoPath -Algorithm SHA256).Hash.ToLower()
     $shaEntry = "$fileHash  $OutputIso`n"
-    [System.IO.File]::WriteAllText($shaPath, $shaEntry, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($shaPath, $shaEntry, $Utf8NoBom)
 
     Write-Host ""
     Write-Host "Done:"
