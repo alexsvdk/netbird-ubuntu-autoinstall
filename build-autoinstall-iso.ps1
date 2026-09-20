@@ -141,8 +141,8 @@ if ($OutputIsoIsAbsolute) {
         exit 1
     }
 
-    $OutputIsoName = Split-Path -Leaf -LiteralPath $OutputIsoPath
-    $OutputIsoDir = Split-Path -Parent -LiteralPath $OutputIsoPath
+    $OutputIsoName = [System.IO.Path]::GetFileName($OutputIsoPath)
+    $OutputIsoDir = [System.IO.Path]::GetDirectoryName($OutputIsoPath)
     if ([string]::IsNullOrWhiteSpace($OutputIsoName) -or [string]::IsNullOrWhiteSpace($OutputIsoDir)) {
         Write-Error "Error: OUTPUT_ISO must name an ISO file."
         exit 1
@@ -153,8 +153,8 @@ if ($OutputIsoIsAbsolute) {
     $ContainerOutputIsoPath = "/output/$OutputIsoName"
 } else {
     $OutputIsoPath = Join-Path $WorkDir $OutputIso
-    $OutputIsoName = Split-Path -Leaf -LiteralPath $OutputIsoPath
-    $OutputIsoDir = Split-Path -Parent -LiteralPath $OutputIsoPath
+    $OutputIsoName = [System.IO.Path]::GetFileName($OutputIsoPath)
+    $OutputIsoDir = [System.IO.Path]::GetDirectoryName($OutputIsoPath)
     $ContainerOutputIsoPath = "/work/$OutputIso"
 }
 
