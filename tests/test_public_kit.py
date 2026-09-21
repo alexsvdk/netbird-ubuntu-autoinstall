@@ -123,6 +123,19 @@ class PublicKitTests(unittest.TestCase):
             provision.index("systemctl enable --now docker.service"),
         )
 
+        files_by_path = {entry["path"]: entry["content"] for entry in files}
+        provision_service = files_by_path["/etc/systemd/system/samovar-provision.service"]
+        self.assertIn("Type=oneshot", provision_service)
+        self.assertIn("RemainAfterExit=yes", provision_service)
+        self.assertIn(
+            ["systemctl", "enable", "--now", "samovar-provision.service"],
+            document["autoinstall"]["user-data"]["runcmd"],
+        )
+        self.assertIn(
+            ["systemctl", "enable", "--now", "samovar-recovery-bootstrap.service"],
+            document["autoinstall"]["user-data"]["runcmd"],
+        )
+
     def test_render_and_validate_real_scripts(self) -> None:
         env = os.environ.copy()
         env.update(

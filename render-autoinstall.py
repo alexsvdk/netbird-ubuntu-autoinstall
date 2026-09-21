@@ -632,7 +632,8 @@ ConditionPathExists=/usr/local/sbin/samovar-provision.sh
 ConditionPathExists=!/var/lib/samovar-provision.done
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/local/sbin/samovar-provision.sh
 Restart=on-failure
 RestartSec=60
@@ -922,10 +923,10 @@ def build_runcmd_samovar() -> list[list[str]]:
         # Create required directories (idempotent)
         ["install", "-d", "-m", "0700", "/etc/samovar-recovery"],
         ["install", "-d", "-m", "0700", "/var/lib/samovar-recovery/bootstrap-inbox"],
-        # Enable services
-        ["systemctl", "enable", "samovar-provision.service"],
-        ["systemctl", "enable", "samovar-recovery-bootstrap.service"],
-        ["systemctl", "enable", "samovar-recovery.timer"],
+        # Start provisioning now; it must finish before NetBird bootstrap runs.
+        ["systemctl", "enable", "--now", "samovar-provision.service"],
+        ["systemctl", "enable", "--now", "samovar-recovery-bootstrap.service"],
+        ["systemctl", "enable", "--now", "samovar-recovery.timer"],
         # Enable fstrim for SSDs
         ["systemctl", "enable", "fstrim.timer"],
     ]
