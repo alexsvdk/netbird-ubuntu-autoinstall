@@ -455,6 +455,9 @@ def build_samovar_storage() -> dict[str, object]:
 _preflight_script = f"""\
 #!/bin/bash
 set -e
+# Keep the checks visible on the installer console and preserve a log for
+# troubleshooting after the screen changes.
+exec > >(tee /run/samovar-preflight.log) 2>&1
 echo 'Samovar preflight: checking hardware...'
 # Check UEFI
 [ -d /sys/firmware/efi ] || {{ echo 'ERROR: Not in UEFI mode'; exit 1; }}
@@ -483,7 +486,7 @@ samovar_early_commands: list[list[str]] = [
         "sh",
         "-c",
         "chmod +x /run/samovar-preflight.sh && "
-        "bash /run/samovar-preflight.sh >/run/samovar-preflight.log 2>&1",
+        "bash /run/samovar-preflight.sh",
     ],
     ["sh", "-c", _notify_live_command("Проверка оборудования пройдена")],
 ]

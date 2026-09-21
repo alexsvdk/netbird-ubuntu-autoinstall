@@ -115,7 +115,8 @@ class PublicKitTests(unittest.TestCase):
             command[2] for command in early_commands if "PREFLIGHT_EOF" in command[2]
         )
         self.assertIn("exit 0", preflight_script)
-        self.assertIn("/run/samovar-preflight.log", early_commands[2][2])
+        self.assertIn("tee /run/samovar-preflight.log", preflight_script)
+        self.assertEqual(early_commands[2][2], "chmod +x /run/samovar-preflight.sh && bash /run/samovar-preflight.sh")
         files = document["autoinstall"]["user-data"]["write_files"]
         provision = next(
             entry["content"]
@@ -208,7 +209,8 @@ class PublicKitTests(unittest.TestCase):
                     if "PREFLIGHT_EOF" in command[2]
                 )
                 self.assertIn("exit 0", preflight_script)
-                self.assertIn("/run/samovar-preflight.log", document["early-commands"][2][2])
+                self.assertIn("tee /run/samovar-preflight.log", preflight_script)
+                self.assertEqual(document["early-commands"][2][2], "chmod +x /run/samovar-preflight.sh && bash /run/samovar-preflight.sh")
 
     def test_mihomo_image_default_and_custom_values_reach_yaml(self) -> None:
         base_env = os.environ.copy()
