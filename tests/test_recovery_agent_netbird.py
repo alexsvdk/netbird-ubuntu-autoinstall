@@ -96,12 +96,23 @@ def test_failed_profile_is_removed_after_rollback() -> None:
 
 def test_current_profile_returns_active_profile_id_not_table_header() -> None:
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if cmd == ["netbird", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
         assert cmd == ["netbird", "profile", "list", "--show-id"]
         output = "ID        NAME       ACTIVE\na1b2c3d4  old-name   ✓\ndefault    default\n".encode()
         return subprocess.CompletedProcess(cmd, 0, output, b"")
 
     with patch.object(agent, "_run", side_effect=fake_run):
         assert agent._netbird_current_profile() == "a1b2c3d4"
+
+
+def test_current_profile_prefers_daemon_status() -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert cmd == ["netbird", "status"]
+        return subprocess.CompletedProcess(cmd, 0, b"Profile: samovar-gen2026091901\n", b"")
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        assert agent._netbird_current_profile() == "samovar-gen2026091901"
 
 def test_mihomo_validation_uses_the_compose_image() -> None:
     result = subprocess.CompletedProcess(["docker", "compose"], 0, b"", b"")

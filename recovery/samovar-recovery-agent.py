@@ -869,14 +869,24 @@ def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
 
 
 def _netbird_current_profile() -> str | None:
-    """Return the ID of the currently active NetBird profile, or None."""
+    """Return the active profile, preferring the daemon's status output."""
+    try:
+        result = _run(["netbird", "status"], check=False, timeout=15)
+        stdout = (result.stdout or b"").decode(errors="replace")
+        match = re.search(r"(?m)^Profile:\s+(\S+)", stdout)
+        if match:
+            return match.group(1)
+    except RecoveryError:
+        pass
+
+    # Older NetBird versions expose the active marker only through profile list.
     try:
         result = _run(
             ["netbird", "profile", "list", "--show-id"],
             check=False,
             timeout=15,
         )
-        stdout = (result.stdout or b"").decode()
+        stdout = (result.stdout or b"").decode(errors="replace")
         active_markers = {"✓", "*", "active", "yes", "true"}
         for line in stdout.splitlines():
             parts = line.split()
