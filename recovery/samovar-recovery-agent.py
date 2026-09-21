@@ -26,6 +26,7 @@ import re
 import shutil
 import stat
 import subprocess
+import uuid
 import sys
 import tempfile
 import time
@@ -913,7 +914,9 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     Apply NetBird configuration via profiles (spec §11.2).
     Returns the new active profile name on success.
     """
-    profile_name = f"samovar-gen{generation}"
+    # NetBird allows duplicate profile names. A retry must use a unique name,
+    # otherwise `profile select <name>` fails with an ambiguous-name error.
+    profile_name = f"samovar-gen{generation}-{uuid.uuid4().hex[:8]}"
     management_url = nb_cfg["management_url"]
     setup_key = nb_cfg["setup_key"]
 
