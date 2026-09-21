@@ -645,13 +645,14 @@ WantedBy=multi-user.target
 
 # ── Recovery-agent service units ──────────────────────────────────────────────
 
-_samovar_recovery_service = """\
+_samovar_recovery_service = f"""\
 [Unit]
 Description=Samovar Recovery Agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
+Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
 Type=simple
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --run
 Restart=on-failure
@@ -675,12 +676,13 @@ Unit=samovar-recovery-scan.service
 WantedBy=timers.target
 """
 
-_samovar_recovery_scan_service = """\
+_samovar_recovery_scan_service = f"""\
 [Unit]
 Description=Samovar Recovery Agent scan
 After=network-online.target
 
 [Service]
+Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
 Type=oneshot
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan
 TimeoutStartSec=120
@@ -692,7 +694,7 @@ ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SAMOVARCFG", \\
     TAG+="systemd", ENV{SYSTEMD_WANTS}="samovar-recovery-scan.service"
 """
 
-_samovar_recovery_bootstrap_service = """\
+_samovar_recovery_bootstrap_service = f"""\
 [Unit]
 Description=Samovar Recovery Bootstrap (first-boot NetBird enrollment)
 After=network-online.target samovar-provision.service
@@ -702,6 +704,7 @@ ConditionPathExists=!/var/lib/samovar-recovery/state.json
 StartLimitIntervalSec=0
 
 [Service]
+Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --bootstrap

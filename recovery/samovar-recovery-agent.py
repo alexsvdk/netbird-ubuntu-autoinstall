@@ -70,6 +70,15 @@ SAMOVAR_MANAGED_COMMENT = "# samovar-managed"
 # Lock file to prevent concurrent runs
 LOCK_FILE = "/run/samovar-recovery.lock"
 
+# Network profile selected by the image renderer.  Keep both for standalone
+# recovery-agent runs that do not receive the systemd environment override.
+_requested_network_interface = os.environ.get("NETWORK_INTERFACE", "both").strip().lower() or "both"
+NETWORK_INTERFACE = (
+    _requested_network_interface
+    if _requested_network_interface in {"both", "lan0", "wifi0"}
+    else "both"
+)
+
 # Healthcheck endpoints used to verify default route (spec §10.3)
 HEALTHCHECK_ENDPOINTS = ["1.1.1.1", "8.8.8.8"]
 
@@ -1238,11 +1247,13 @@ def apply_config(cfg: dict, raw: bytes, *, source_label: str) -> None:
     # other sections from running.  All errors are collected and re-raised.
     errors: list[str] = []
 
-    if "wifi" in cfg:
+    if "wifi" in cfg and NETWORK_INTERFACE in {"both", "wifi0"}:
         try:
             apply_wifi(cfg["wifi"])
         except RecoveryError as exc:
             errors.append(f"wifi: {exc}")
+    elif "wifi" in cfg:
+        log.info("Skipping Wi-Fi configuration for NETWORK_INTERFACE=%s", NETWORK_INTERFACE)
 
     if "netbird" in cfg:
         try:

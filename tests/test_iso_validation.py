@@ -220,6 +220,25 @@ class TestSamovarIsoValidation(unittest.TestCase):
         self.assertIn("ufw allow in on lan0", provision)
         self.assertNotIn("ufw allow in on wifi0", provision)
 
+        recovery_agent = next(
+            item["content"]
+            for item in files
+            if item["path"] == "/usr/local/sbin/samovar-recovery-agent.py"
+        )
+        self.assertIn('NETWORK_INTERFACE in {"both", "wifi0"}', recovery_agent)
+        bootstrap_service = next(
+            item["content"]
+            for item in files
+            if item["path"] == "/etc/systemd/system/samovar-recovery-bootstrap.service"
+        )
+        self.assertIn("Environment=NETWORK_INTERFACE=lan0", bootstrap_service)
+        scan_service = next(
+            item["content"]
+            for item in files
+            if item["path"] == "/etc/systemd/system/samovar-recovery-scan.service"
+        )
+        self.assertIn("Environment=NETWORK_INTERFACE=lan0", scan_service)
+
     def test_lan0_profile_passes_iso_validation(self) -> None:
         render, document = self._render_samovar_with_interface("lan0")
         self.assertEqual(render.returncode, 0, render.stderr)
