@@ -400,9 +400,16 @@ echo 'Samovar preflight: checking hardware...'
 [ -d /sys/firmware/efi ] || {{ echo 'ERROR: Not in UEFI mode'; exit 1; }}
 # Check arch
 uname -m | grep -q x86_64 || {{ echo 'ERROR: Not x86_64'; exit 1; }}
-# Check serials — each must appear exactly once
+# Check full udev serials — each must appear exactly once.
+# lsblk SERIAL may expose only ID_SERIAL_SHORT on QEMU disks.
 for serial in {SYSTEM_SSD_SERIAL} {DATA_SSD_SERIAL} {HDD_SERIAL}; do
-  count=$(lsblk -o SERIAL -n 2>/dev/null | grep -c "^${{serial}}$" || echo 0)
+  count=0
+  while read -r dev; do
+    actual=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL=//p')
+    if [ "$actual" = "$serial" ]; then
+      count=$((count + 1))
+    fi
+  done < <(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2 == "disk" {{print "/dev/" $1}}')
   [ "$count" -eq 1 ] || {{ echo "ERROR: Serial $serial found $count times (expected 1)"; exit 1; }}
 done
 echo 'Samovar preflight: all checks passed'
