@@ -465,26 +465,24 @@ mkdir -p /var/lib/mihomo
 chown mihomo:mihomo /etc/mihomo /var/lib/mihomo
 chmod 750 /etc/mihomo /var/lib/mihomo
 
-# Install mihomo binary if not already present
-MIHOMO_BIN="/usr/local/bin/mihomo"
-if [[ ! -x "${MIHOMO_BIN}" ]]; then
-    log "Mihomo binary not found at ${MIHOMO_BIN}."
-    log "Download and place the mihomo binary at ${MIHOMO_BIN} manually,"
-    log "or embed it in the ISO offline bundle for automatic installation."
-    warn "Mihomo service will not start until the binary is installed."
-else
-    log "Mihomo binary found at ${MIHOMO_BIN}."
-fi
-
-# Copy mihomo.service from provisioning bundle
+# Install the Compose definition and editable image selection.
 SCRIPT_DIR_MIHOMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIHOMO_SERVICE_SRC="${SCRIPT_DIR_MIHOMO}/mihomo.service"
+MIHOMO_COMPOSE_SRC="${SCRIPT_DIR_MIHOMO}/mihomo.compose.yml"
 MIHOMO_SERVICE_DST="/etc/systemd/system/mihomo.service"
 
 if [[ -f "${MIHOMO_SERVICE_SRC}" ]]; then
-    cp "${MIHOMO_SERVICE_SRC}" "${MIHOMO_SERVICE_DST}"
-    log "Installed mihomo.service from provisioning bundle."
+    install -m 0644 "${MIHOMO_SERVICE_SRC}" "${MIHOMO_SERVICE_DST}"
 fi
+if [[ -f "${MIHOMO_COMPOSE_SRC}" ]]; then
+    install -m 0644 "${MIHOMO_COMPOSE_SRC}" /etc/mihomo/compose.yml
+fi
+MIHOMO_IMAGE="${MIHOMO_IMAGE:-metacubex/mihomo:latest}"
+if [[ ! "${MIHOMO_IMAGE}" =~ ^[A-Za-z0-9][A-Za-z0-9._/@:-]*$ ]]; then
+    die "MIHOMO_IMAGE must be a valid Docker image reference without whitespace."
+fi
+printf 'MIHOMO_IMAGE=%s\n' "${MIHOMO_IMAGE}" > /etc/mihomo/compose.env
+chmod 0600 /etc/mihomo/compose.env
 
 # Install proxy-run and proxy-shell wrappers
 for wrapper in proxy-run proxy-shell; do
@@ -496,13 +494,13 @@ for wrapper in proxy-run proxy-shell; do
     fi
 done
 
-# Enable mihomo only if binary exists
-if [[ -x "${MIHOMO_BIN}" && -f "${MIHOMO_SERVICE_DST}" ]]; then
+# Enable the wrapper; it starts only after recovery writes config.yaml.
+if [[ -f "${MIHOMO_SERVICE_DST}" && -f /etc/mihomo/compose.yml ]]; then
     systemctl daemon-reload
     systemctl enable mihomo
-    log "mihomo.service enabled."
+    log "mihomo.service enabled (Docker Compose)."
 else
-    log "mihomo.service NOT enabled — binary or service file missing."
+    log "mihomo.service NOT enabled — Compose files are missing."
 fi
 
 log "Mihomo setup complete."

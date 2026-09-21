@@ -1,0 +1,19 @@
+# Host Mihomo instance managed by systemd and Docker Compose.
+# Update the image with:
+#   docker compose --env-file /etc/mihomo/compose.env \
+#     -f /etc/mihomo/compose.yml pull mihomo
+#   systemctl restart mihomo.service
+services:
+  mihomo:
+    image: ${MIHOMO_IMAGE:-metacubex/mihomo:latest}
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["mihomo"]
+    command: ["-d", "/root/.config/mihomo"]
+    volumes:
+      - /etc/mihomo:/root/.config/mihomo:ro
+      - /var/lib/mihomo:/var/lib/mihomo
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

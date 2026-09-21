@@ -549,7 +549,7 @@ ISO должен включать критический минимум, нео�
 - `wpa_supplicant`, `iw`, firmware Intel Wi-Fi;
 - NetBird client;
 - Docker Engine и Compose v2;
-- Mihomo binary или заранее загруженный Docker image;
+- Mihomo Docker image, загруженный заранее или доступный через Docker registry;
 - recovery-agent;
 - Python runtime, используемый recovery-agent;
 - `ca-certificates`, `curl`, `git`, `tmux`;

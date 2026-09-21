@@ -185,6 +185,18 @@ chmod +x build-autoinstall-iso.sh
    ```
 4. После успешной регистрации отзовите/удалите одноразовый `setup_key` в панели управления NetBird.
 
+### Обновление Mihomo
+
+Mihomo запускается как контейнер Docker Compose. Релиз не вшивается в host и не требует пересборки ISO. Образ задаётся в `/etc/mihomo/compose.env`. Для обновления до текущего `latest`:
+
+```bash
+sudo docker compose --env-file /etc/mihomo/compose.env \
+  -f /etc/mihomo/compose.yml pull mihomo
+sudo systemctl restart mihomo.service
+```
+
+Чтобы использовать конкретный тег, измените `MIHOMO_IMAGE` в `/etc/mihomo/compose.env`, затем выполните те же команды.
+
 ---
 
 ## 9. Аварийное обновление сети и настроек с Recovery-флешки

@@ -44,6 +44,9 @@ BOOTSTRAP_INBOX = "/var/lib/samovar-recovery/bootstrap-inbox"
 LOG_FILE = "/var/log/samovar-recovery.log"
 NETPLAN_MANAGED_FILE = "/etc/netplan/50-samovar-wifi.yaml"
 MIHOMO_CONFIG = "/etc/mihomo/config.yaml"
+MIHOMO_COMPOSE_FILE = "/etc/mihomo/compose.yml"
+MIHOMO_COMPOSE_ENV = "/etc/mihomo/compose.env"
+MIHOMO_COMPOSE_SERVICE = "mihomo"
 SAMOVAR_USB_LABEL = "SAMOVARCFG"
 MAX_CONFIG_BYTES = 4 * 1024 * 1024  # 4 MiB
 SCHEMA_VERSION = 1
@@ -1108,12 +1111,46 @@ def mihomo_config_to_yaml(config_dict: dict) -> str:
     return header + _dict_to_yaml(config_dict, 0) + "\n"
 
 
+def _mihomo_compose_command(*args: str) -> list[str]:
+    """Build a Compose command for the host Mihomo service."""
+    return [
+        "docker",
+        "compose",
+        "--env-file",
+        MIHOMO_COMPOSE_ENV,
+        "-f",
+        MIHOMO_COMPOSE_FILE,
+        *args,
+    ]
+
+
+def _mihomo_container_config_path(yaml_path: Path) -> str:
+    """Map a host config path to the read-only path mounted in the container."""
+    try:
+        relative = yaml_path.resolve().relative_to(Path(MIHOMO_CONFIG).parent.resolve())
+    except ValueError as exc:
+        raise RecoveryError(
+            f"Mihomo config must be under {Path(MIHOMO_CONFIG).parent}: {yaml_path}"
+        ) from exc
+    return f"/root/.config/mihomo/{relative.as_posix()}"
+
+
 def _validate_mihomo_config_file(yaml_path: Path) -> None:
-    """Run `mihomo -t -f <file>` to validate syntax."""
+    """Run Mihomo validation in the same Compose image used in production."""
+    container_path = _mihomo_container_config_path(yaml_path)
     result = _run(
-        ["mihomo", "-t", "-f", str(yaml_path)],
+        _mihomo_compose_command(
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            MIHOMO_COMPOSE_SERVICE,
+            "-t",
+            "-f",
+            container_path,
+        ),
         check=False,
-        timeout=30,
+        timeout=120,
     )
     if result.returncode != 0:
         stderr = (result.stderr or b"").decode(errors="replace").strip()
@@ -1286,17 +1323,19 @@ def apply_config(cfg: dict, raw: bytes, *, source_label: str) -> None:
     elif "wifi" in cfg:
         log.info("Skipping Wi-Fi configuration for NETWORK_INTERFACE=%s", NETWORK_INTERFACE)
 
-    if "netbird" in cfg:
-        try:
-            active_netbird_profile = apply_netbird(cfg["netbird"], generation)
-        except RecoveryError as exc:
-            errors.append(f"netbird: {exc}")
-
+    # Validate and start Mihomo before changing NetBird.  A missing image or
+    # invalid proxy config must not create a new NetBird profile on every retry.
     if "mihomo" in cfg:
         try:
             mihomo_sha256 = apply_mihomo(cfg["mihomo"])
         except RecoveryError as exc:
             errors.append(f"mihomo: {exc}")
+
+    if "netbird" in cfg:
+        try:
+            active_netbird_profile = apply_netbird(cfg["netbird"], generation)
+        except RecoveryError as exc:
+            errors.append(f"netbird: {exc}")
 
     if errors:
         err_summary = "; ".join(errors)

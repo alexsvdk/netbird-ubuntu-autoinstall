@@ -63,6 +63,10 @@ if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", NOTIFY_TOPIC):
     fail("NOTIFY_TOPIC must contain only letters, digits, dots, underscores, or hyphens.")
 NOTIFY_URL = f"https://ntfy.sh/{NOTIFY_TOPIC}"
 
+MIHOMO_IMAGE = os.environ.get("MIHOMO_IMAGE", "metacubex/mihomo:latest").strip()
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/@:-]*", MIHOMO_IMAGE):
+    fail("MIHOMO_IMAGE must be a valid Docker image reference without whitespace.")
+
 # ---------------------------------------------------------------------------
 # Common required inputs (both modes)
 # ---------------------------------------------------------------------------
@@ -543,21 +547,6 @@ _samovar_firewall_rules = "\n".join(
     for interface in _samovar_firewall_interfaces
 )
 
-# Pin the release and verify the downloaded archive before installing it.
-# Mihomo is part of the host management plane and must exist before recovery
-# bootstrap starts.
-_mihomo_assets = {
-    "amd64": (
-        "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-amd64-compatible-v1.19.31.gz",
-        "04cf9f09671704f839ddbee2e93069dc831a4123a75281e725d1d96ab9ac1afc",
-    ),
-    "arm64": (
-        "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-arm64-v1.19.31.gz",
-        "9e0f11afbf38426b8bd88fdc594678f8161c57eccb4e1b77acb12b493904f1d4",
-    ),
-}
-_mihomo_url, _mihomo_sha256 = _mihomo_assets[arch]
-
 _samovar_provision_script = f"""\
 #!/usr/bin/env bash
 # samovar-provision.sh — first-boot provisioning for samovar.
@@ -642,20 +631,10 @@ DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Time
     smartmontools btop tmux git jq
 notify "Базовые пакеты установлены"
 
-# ── Mihomo ────────────────────────────────────────────────────────────────────
-# Install the pinned host binary before recovery bootstrap validates its config.
-MIHOMO_URL="{_mihomo_url}"
-MIHOMO_SHA256="{_mihomo_sha256}"
-if ! command -v mihomo >/dev/null 2>&1; then
-  mihomo_tmp_dir="$(mktemp -d /tmp/samovar-mihomo.XXXXXX)"
-  curl --fail --silent --show-error --location \
-      --connect-timeout 15 --max-time 180 \
-      "$MIHOMO_URL" -o "$mihomo_tmp_dir/mihomo.gz"
-  echo "$MIHOMO_SHA256  $mihomo_tmp_dir/mihomo.gz" | sha256sum -c -
-  gzip -dc "$mihomo_tmp_dir/mihomo.gz" > "$mihomo_tmp_dir/mihomo"
-  install -m 0755 "$mihomo_tmp_dir/mihomo" /usr/local/bin/mihomo
-  rm -rf "$mihomo_tmp_dir"
-fi
+# ── Mihomo Compose runtime ────────────────────────────────────────────────────
+# The image is selected in /etc/mihomo/compose.env and can be updated without
+# rebuilding the ISO or downloading a host binary.
+install -d -m 0755 /etc/mihomo /var/lib/mihomo
 systemctl daemon-reload
 systemctl enable mihomo.service
 
@@ -836,6 +815,19 @@ def _load_mihomo_service() -> str:
     return ""
 
 
+def _load_mihomo_compose() -> str:
+    """Load the host Mihomo Compose definition."""
+    candidate = ROOT / "provisioning/mihomo.compose.yml"
+    if candidate.exists():
+        return candidate.read_text(encoding="utf-8")
+    return ""
+
+
+def _load_mihomo_env() -> str:
+    """Render the user-editable Mihomo image selection."""
+    return f"MIHOMO_IMAGE={MIHOMO_IMAGE}\n"
+
+
 def _load_samovar_config_bytes() -> str:
     """Return samovar-config.json content for embedding, or empty string."""
     cfg_path = Path(os.environ.get("SAMOVAR_CONFIG_FILE", "samovar-config.json"))
@@ -934,6 +926,18 @@ def build_write_files_samovar() -> list[dict[str, str]]:
         "owner": "root:root",
         "permissions": "0644",
         "content": _load_mihomo_service(),
+    })
+    files.append({
+        "path": "/etc/mihomo/compose.yml",
+        "owner": "root:root",
+        "permissions": "0644",
+        "content": _load_mihomo_compose(),
+    })
+    files.append({
+        "path": "/etc/mihomo/compose.env",
+        "owner": "root:root",
+        "permissions": "0600",
+        "content": _load_mihomo_env(),
     })
 
     # ── Recovery agent ───────────────────────────────────────────────────────

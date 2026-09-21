@@ -88,3 +88,26 @@ def test_current_profile_returns_active_profile_id_not_table_header() -> None:
 
     with patch.object(agent, "_run", side_effect=fake_run):
         assert agent._netbird_current_profile() == "a1b2c3d4"
+
+def test_mihomo_validation_uses_the_compose_image() -> None:
+    result = subprocess.CompletedProcess(["docker", "compose"], 0, b"", b"")
+    with patch.object(agent, "_run", return_value=result) as mock_run:
+        agent._validate_mihomo_config_file(Path("/etc/mihomo/.samovar-test.yaml"))
+
+    command = mock_run.call_args.args[0]
+    assert command[:8] == [
+        "docker",
+        "compose",
+        "--env-file",
+        "/etc/mihomo/compose.env",
+        "-f",
+        "/etc/mihomo/compose.yml",
+        "run",
+        "--rm",
+    ]
+    assert command[-4:] == [
+        "mihomo",
+        "-t",
+        "-f",
+        "/root/.config/mihomo/.samovar-test.yaml",
+    ]

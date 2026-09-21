@@ -118,8 +118,8 @@ class PublicKitTests(unittest.TestCase):
         )
         self.assertIn("https://pkgs.netbird.io/install.sh | sh", provision)
         self.assertIn("command -v netbird", provision)
-        self.assertIn("/usr/local/bin/mihomo", provision)
-        self.assertIn("sha256sum -c", provision)
+        self.assertIn("install -d -m 0755 /etc/mihomo /var/lib/mihomo", provision)
+        self.assertNotIn("/usr/local/bin/mihomo", provision)
         self.assertIn("systemctl enable mihomo.service", provision)
         self.assertLess(
             provision.index("installing NetBird"),
@@ -131,7 +131,16 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("Type=oneshot", provision_service)
         self.assertIn("RemainAfterExit=yes", provision_service)
         mihomo_service = files_by_path["/etc/systemd/system/mihomo.service"]
-        self.assertIn("ExecStart=/usr/local/bin/mihomo", mihomo_service)
+        self.assertIn("ExecStart=/usr/bin/docker compose", mihomo_service)
+        self.assertNotIn("ExecStart=/usr/local/bin/mihomo", mihomo_service)
+        mihomo_compose = files_by_path["/etc/mihomo/compose.yml"]
+        self.assertIn("metacubex/mihomo:latest", mihomo_compose)
+        self.assertIn("network_mode: host", mihomo_compose)
+        self.assertIn("cap_drop:", mihomo_compose)
+        self.assertEqual(
+            files_by_path["/etc/mihomo/compose.env"],
+            "MIHOMO_IMAGE=metacubex/mihomo:latest\n",
+        )
         self.assertIn(
             ["systemctl", "enable", "--now", "samovar-provision.service"],
             document["autoinstall"]["user-data"]["runcmd"],
@@ -179,6 +188,39 @@ class PublicKitTests(unittest.TestCase):
             notifier = next(entry["content"] for entry in files if entry["path"] == "/usr/local/sbin/samovar-notify")
             self.assertIn(f"https://ntfy.sh/{topic}", notifier)
             self.assertIn("Установщик запущен", document["early-commands"][0][2])
+
+    def test_mihomo_image_default_and_custom_values_reach_yaml(self) -> None:
+        base_env = os.environ.copy()
+        base_env.update(
+            {
+                "HOSTNAME": "test-server",
+                "USERNAME": "server",
+                "PASSWORD_HASH": "$6$rounds=4096$testsalt$testhashvalueforunittestonly",
+                "SSH_PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKeyMaterialOnlyNotReal test@example",
+                "ARCH": "amd64",
+                "APT_REGION": "auto",
+                "SAMOVAR_MODE": "samovar",
+                "SAMOVAR_CONFIG_FILE": "/does-not-exist/samovar-config.json",
+            }
+        )
+        for image in ("metacubex/mihomo:latest", "registry.example/mihomo:v2"):
+            env = base_env.copy()
+            if image == "metacubex/mihomo:latest":
+                env.pop("MIHOMO_IMAGE", None)
+            else:
+                env["MIHOMO_IMAGE"] = image
+            result = subprocess.run(
+                [sys.executable, str(RENDER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(ROOT),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            document = yaml.safe_load(result.stdout)["autoinstall"]
+            files = {entry["path"]: entry["content"] for entry in document["user-data"]["write_files"]}
+            self.assertEqual(files["/etc/mihomo/compose.env"], f"MIHOMO_IMAGE={image}\n")
 
     def test_render_and_validate_real_scripts(self) -> None:
         env = os.environ.copy()
@@ -232,6 +274,10 @@ class PublicKitTests(unittest.TestCase):
             )
             self.assertEqual(validate.returncode, 0, validate.stderr or validate.stdout)
             self.assertIn("Validation passed", validate.stdout)
+
+    def test_mihomo_image_is_forwarded_by_build_entry_points(self) -> None:
+        for rel in ("build-autoinstall-iso.sh", "build-autoinstall-iso.ps1", "build-autoinstall-iso.bat"):
+            self.assertIn("MIHOMO_IMAGE", (ROOT / rel).read_text(encoding="utf-8"))
 
     def test_build_script_bash_syntax(self) -> None:
         result = subprocess.run(
