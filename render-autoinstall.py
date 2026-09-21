@@ -22,6 +22,8 @@ from urllib.parse import urlparse
 
 import yaml
 
+ROOT = Path(__file__).resolve().parent
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -541,6 +543,21 @@ _samovar_firewall_rules = "\n".join(
     for interface in _samovar_firewall_interfaces
 )
 
+# Pin the release and verify the downloaded archive before installing it.
+# Mihomo is part of the host management plane and must exist before recovery
+# bootstrap starts.
+_mihomo_assets = {
+    "amd64": (
+        "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-amd64-compatible-v1.19.31.gz",
+        "04cf9f09671704f839ddbee2e93069dc831a4123a75281e725d1d96ab9ac1afc",
+    ),
+    "arm64": (
+        "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-arm64-v1.19.31.gz",
+        "9e0f11afbf38426b8bd88fdc594678f8161c57eccb4e1b77acb12b493904f1d4",
+    ),
+}
+_mihomo_url, _mihomo_sha256 = _mihomo_assets[arch]
+
 _samovar_provision_script = f"""\
 #!/usr/bin/env bash
 # samovar-provision.sh — first-boot provisioning for samovar.
@@ -624,6 +641,23 @@ DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Time
     curl ca-certificates docker.io docker-compose-v2 ufw \\
     smartmontools btop tmux git jq
 notify "Базовые пакеты установлены"
+
+# ── Mihomo ────────────────────────────────────────────────────────────────────
+# Install the pinned host binary before recovery bootstrap validates its config.
+MIHOMO_URL="{_mihomo_url}"
+MIHOMO_SHA256="{_mihomo_sha256}"
+if ! command -v mihomo >/dev/null 2>&1; then
+  mihomo_tmp_dir="$(mktemp -d /tmp/samovar-mihomo.XXXXXX)"
+  curl --fail --silent --show-error --location \
+      --connect-timeout 15 --max-time 180 \
+      "$MIHOMO_URL" -o "$mihomo_tmp_dir/mihomo.gz"
+  echo "$MIHOMO_SHA256  $mihomo_tmp_dir/mihomo.gz" | sha256sum -c -
+  gzip -dc "$mihomo_tmp_dir/mihomo.gz" > "$mihomo_tmp_dir/mihomo"
+  install -m 0755 "$mihomo_tmp_dir/mihomo" /usr/local/bin/mihomo
+  rm -rf "$mihomo_tmp_dir"
+fi
+systemctl daemon-reload
+systemctl enable mihomo.service
 
 # ── NetBird client ────────────────────────────────────────────────────────────
 # The recovery bootstrap invokes netbird, so install it before that service is
@@ -788,10 +822,18 @@ sys.exit(1)
 
 def _load_recovery_agent() -> str:
     """Load recovery agent from repo if present, otherwise use stub."""
-    candidate = Path("recovery/samovar-recovery-agent.py")
+    candidate = ROOT / "recovery/samovar-recovery-agent.py"
     if candidate.exists():
         return candidate.read_text(encoding="utf-8")
     return _recovery_agent_stub
+
+
+def _load_mihomo_service() -> str:
+    """Load the host Mihomo unit shipped with the provisioning bundle."""
+    candidate = ROOT / "provisioning/mihomo.service"
+    if candidate.exists():
+        return candidate.read_text(encoding="utf-8")
+    return ""
 
 
 def _load_samovar_config_bytes() -> str:
@@ -886,6 +928,12 @@ def build_write_files_samovar() -> list[dict[str, str]]:
         "owner": "root:root",
         "permissions": "0644",
         "content": _samovar_provision_service,
+    })
+    files.append({
+        "path": "/etc/systemd/system/mihomo.service",
+        "owner": "root:root",
+        "permissions": "0644",
+        "content": _load_mihomo_service(),
     })
 
     # ── Recovery agent ───────────────────────────────────────────────────────

@@ -118,6 +118,9 @@ class PublicKitTests(unittest.TestCase):
         )
         self.assertIn("https://pkgs.netbird.io/install.sh | sh", provision)
         self.assertIn("command -v netbird", provision)
+        self.assertIn("/usr/local/bin/mihomo", provision)
+        self.assertIn("sha256sum -c", provision)
+        self.assertIn("systemctl enable mihomo.service", provision)
         self.assertLess(
             provision.index("installing NetBird"),
             provision.index("systemctl enable --now docker.service"),
@@ -127,6 +130,8 @@ class PublicKitTests(unittest.TestCase):
         provision_service = files_by_path["/etc/systemd/system/samovar-provision.service"]
         self.assertIn("Type=oneshot", provision_service)
         self.assertIn("RemainAfterExit=yes", provision_service)
+        mihomo_service = files_by_path["/etc/systemd/system/mihomo.service"]
+        self.assertIn("ExecStart=/usr/local/bin/mihomo", mihomo_service)
         self.assertIn(
             ["systemctl", "enable", "--now", "samovar-provision.service"],
             document["autoinstall"]["user-data"]["runcmd"],
