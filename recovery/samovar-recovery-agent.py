@@ -27,7 +27,6 @@ import re
 import shutil
 import stat
 import subprocess
-import uuid
 import sys
 import tempfile
 import time
@@ -934,9 +933,9 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     Apply NetBird configuration via profiles (spec §11.2).
     Returns the new active profile name on success.
     """
-    # NetBird allows duplicate profile names. A retry must use a unique name,
-    # otherwise `profile select <name>` fails with an ambiguous-name error.
-    profile_name = f"samovar-gen{generation}-{uuid.uuid4().hex[:8]}"
+    # Reuse one deterministic profile for a generation. This makes retries
+    # idempotent and avoids leaving transient profiles after a timeout.
+    profile_name = f"samovar-gen{generation}"
     management_url = nb_cfg["management_url"]
     setup_key = nb_cfg["setup_key"]
 
@@ -949,13 +948,16 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     old_profile = _netbird_current_profile()
     log.info("Current NetBird profile: %s", old_profile)
 
-    # Create new profile
+    # Create new profile. Reuse it on retries so a transient `netbird up`
+    # timeout does not create an unbounded list of orphaned profiles.
+    profile_created = False
     try:
-        _run(
+        add_result = _run(
             ["netbird", "profile", "add", profile_name],
             check=False,
             timeout=15,
         )
+        profile_created = add_result.returncode == 0
         _run(
             ["netbird", "profile", "select", profile_name],
             timeout=15,
@@ -963,7 +965,7 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
         log.info("Switched to NetBird profile: %s", profile_name)
     except RecoveryError as exc:
         log.error("Failed to switch NetBird profile: %s", exc)
-        _netbird_rollback(old_profile)
+        _netbird_rollback(old_profile, profile_name if profile_created else None)
         raise RecoveryError(f"NetBird profile switch failed: {exc}") from exc
 
     # Write setup key to temp file — delete immediately after use
@@ -983,7 +985,7 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
         log.info("netbird up succeeded.")
     except RecoveryError as exc:
         log.error("netbird up failed: %s", exc)
-        _netbird_rollback(old_profile)
+        _netbird_rollback(old_profile, profile_name if profile_created else None)
         raise RecoveryError(f"netbird up failed: {exc}") from exc
     finally:
         if key_path is not None:
@@ -993,7 +995,7 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     # Wait for connection
     if not _netbird_wait_connected():
         log.error("NetBird did not connect; rolling back.")
-        _netbird_rollback(old_profile)
+        _netbird_rollback(old_profile, profile_name if profile_created else None)
         raise RecoveryError("NetBird connection not established after netbird up.")
 
     # Verify management URL matches
@@ -1024,19 +1026,32 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     return profile_name
 
 
-def _netbird_rollback(old_profile: str | None) -> None:
-    """Restore old NetBird profile."""
+def _netbird_rollback(
+    old_profile: str | None, failed_profile: str | None = None
+) -> None:
+    """Restore the old profile and remove a profile created by a failed attempt."""
     if old_profile is None:
         log.warning("No previous NetBird profile to restore.")
-        return
-    log.info("Rolling back to NetBird profile: %s", old_profile)
-    try:
-        # Selecting the previous profile is enough. Calling `netbird up` without
-        # a setup key starts interactive SSO and can block recovery indefinitely.
-        _run(["netbird", "profile", "select", old_profile], check=False, timeout=15)
-        log.info("Rolled back to NetBird profile: %s", old_profile)
-    except RecoveryError as exc:
-        raise RollbackError(f"NetBird rollback failed: {exc}") from exc
+    else:
+        log.info("Rolling back to NetBird profile: %s", old_profile)
+        try:
+            # Selecting the previous profile is enough. Calling `netbird up`
+            # without a setup key starts interactive SSO and can block recovery.
+            _run(["netbird", "profile", "select", old_profile], check=False, timeout=15)
+            log.info("Rolled back to NetBird profile: %s", old_profile)
+        except RecoveryError as exc:
+            raise RollbackError(f"NetBird rollback failed: {exc}") from exc
+
+    if failed_profile and failed_profile != old_profile:
+        try:
+            _run(
+                ["netbird", "profile", "remove", failed_profile],
+                check=False,
+                timeout=15,
+            )
+            log.info("Removed failed NetBird profile: %s", failed_profile)
+        except RecoveryError as exc:
+            log.warning("Could not remove failed NetBird profile %s: %s", failed_profile, exc)
 
 
 # ---------------------------------------------------------------------------

@@ -222,10 +222,19 @@ set -u
 URL={shlex.quote(NOTIFY_URL)}
 MESSAGE="${{1:-}}"
 if command -v curl >/dev/null 2>&1; then
-    curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+    # The VM network can block direct TLS to ntfy.sh. Prefer the local
+    # Mihomo proxy, then fall back to direct egress while it is unavailable.
+    if curl --fail --silent --show-error --proxy http://127.0.0.1:7890 \
+        --connect-timeout 3 --max-time 15 \
+        -H "Title: Samovar installer" --data-raw "$MESSAGE" "$URL" >/dev/null 2>&1; then
+        exit 0
+    fi
+    curl --fail --silent --show-error --noproxy '*' --connect-timeout 3 --max-time 5 \
         -H "Title: Samovar installer" --data-raw "$MESSAGE" "$URL" >/dev/null 2>&1 || true
 elif command -v wget >/dev/null 2>&1; then
-    wget --quiet --timeout=15 --header="Title: Samovar installer" \
+    https_proxy=http://127.0.0.1:7890 wget --quiet --timeout=15 \
+        --header="Title: Samovar installer" --post-data="$MESSAGE" -O - "$URL" >/dev/null 2>&1 || \
+    wget --quiet --timeout=5 --header="Title: Samovar installer" \
         --post-data="$MESSAGE" -O - "$URL" >/dev/null 2>&1 || true
 fi
 exit 0
@@ -766,6 +775,8 @@ After=network-online.target
 Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
 Environment=HOME=/root
 Type=oneshot
+# Bootstrap owns the inbox while first-boot enrollment is retrying.
+ExecCondition=/usr/bin/test ! -e /var/lib/samovar-recovery/bootstrap-inbox/samovar-config.json
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb
 TimeoutStartSec=120
 """

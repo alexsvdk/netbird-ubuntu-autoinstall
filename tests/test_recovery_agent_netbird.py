@@ -31,7 +31,7 @@ def test_netbird_run_supplies_home_for_systemd_services() -> None:
     assert mock_run.call_args.kwargs["env"]["HOME"] == "/root"
 
 
-def test_retry_uses_unique_netbird_profile_names() -> None:
+def test_retry_reuses_deterministic_netbird_profile_name() -> None:
     commands: list[list[str]] = []
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -62,9 +62,7 @@ def test_retry_uses_unique_netbird_profile_names() -> None:
         for cmd in commands
         if cmd[:3] == ["netbird", "profile", "add"]
     ]
-    assert len(added) == 2
-    assert added[0] != added[1]
-    assert all(name.startswith("samovar-gen2026091901-") for name in added)
+    assert added == ["samovar-gen2026091901", "samovar-gen2026091901"]
 
 
 def test_rollback_does_not_start_interactive_sso() -> None:
@@ -78,6 +76,22 @@ def test_rollback_does_not_start_interactive_sso() -> None:
         agent._netbird_rollback("old-profile")
 
     assert commands == [["netbird", "profile", "select", "old-profile"]]
+
+
+def test_failed_profile_is_removed_after_rollback() -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        agent._netbird_rollback("old-profile", "failed-profile")
+
+    assert commands == [
+        ["netbird", "profile", "select", "old-profile"],
+        ["netbird", "profile", "remove", "failed-profile"],
+    ]
 
 
 def test_current_profile_returns_active_profile_id_not_table_header() -> None:

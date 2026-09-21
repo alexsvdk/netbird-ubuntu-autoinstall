@@ -157,6 +157,7 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("Environment=HOME=/root", files_by_path["/etc/systemd/system/samovar-recovery-bootstrap.service"])
         recovery_scan = files_by_path["/etc/systemd/system/samovar-recovery-scan.service"]
         self.assertIn("ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb", recovery_scan)
+        self.assertIn("ExecCondition=/usr/bin/test ! -e /var/lib/samovar-recovery/bootstrap-inbox/samovar-config.json", recovery_scan)
         self.assertNotIn(" --scan\n", recovery_scan)
 
     def test_notify_topic_default_and_custom_values_reach_yaml(self) -> None:
@@ -192,6 +193,7 @@ class PublicKitTests(unittest.TestCase):
             files = document["user-data"]["write_files"]
             notifier = next(entry["content"] for entry in files if entry["path"] == "/usr/local/sbin/samovar-notify")
             self.assertIn(f"https://ntfy.sh/{topic}", notifier)
+            self.assertIn("--proxy http://127.0.0.1:7890", notifier)
             self.assertIn("Установщик запущен", document["early-commands"][0][2])
 
     def test_mihomo_image_default_and_custom_values_reach_yaml(self) -> None:
