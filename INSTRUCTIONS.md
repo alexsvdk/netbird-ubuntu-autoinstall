@@ -88,7 +88,12 @@ ALLOWED_SIGNERS="alex@samovar namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3
 # Зеркало APT (приоритет Яндекса)
 APT_REGION=ru
 APT_MIRROR=http://mirror.yandex.ru/ubuntu
+
+# Тема ntfy.sh для уведомлений о ходе установки
+NOTIFY_TOPIC=samovar_test
 ```
+
+Установите приложение **ntfy** на телефон и подпишитесь на ту же тему. Для реальной установки лучше задать длинную уникальную тему.
 
 ---
 

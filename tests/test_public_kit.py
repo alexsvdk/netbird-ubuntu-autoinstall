@@ -136,6 +136,41 @@ class PublicKitTests(unittest.TestCase):
             document["autoinstall"]["user-data"]["runcmd"],
         )
 
+    def test_notify_topic_default_and_custom_values_reach_yaml(self) -> None:
+        base_env = os.environ.copy()
+        base_env.update(
+            {
+                "HOSTNAME": "test-server",
+                "USERNAME": "server",
+                "PASSWORD_HASH": "$6$rounds=4096$testsalt$testhashvalueforunittestonly",
+                "SSH_PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKeyMaterialOnlyNotReal test@example",
+                "NETBIRD_SETUP_KEY": "test-setup-key",
+                "ARCH": "amd64",
+                "APT_REGION": "auto",
+                "SAMOVAR_MODE": "generic",
+            }
+        )
+        base_env.pop("NOTIFY_TOPIC", None)
+
+        for topic in ("samovar_test", "custom_install_topic"):
+            env = base_env.copy()
+            if topic != "samovar_test":
+                env["NOTIFY_TOPIC"] = topic
+            result = subprocess.run(
+                [sys.executable, str(RENDER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(ROOT),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            document = yaml.safe_load(result.stdout)["autoinstall"]
+            files = document["user-data"]["write_files"]
+            notifier = next(entry["content"] for entry in files if entry["path"] == "/usr/local/sbin/samovar-notify")
+            self.assertIn(f"https://ntfy.sh/{topic}", notifier)
+            self.assertIn("Установщик запущен", document["early-commands"][0][2])
+
     def test_render_and_validate_real_scripts(self) -> None:
         env = os.environ.copy()
         env.update(

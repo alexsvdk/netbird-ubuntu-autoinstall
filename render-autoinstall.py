@@ -56,6 +56,11 @@ NETWORK_INTERFACE = os.environ.get("NETWORK_INTERFACE", "both").strip().lower() 
 if SAMOVAR_MODE and NETWORK_INTERFACE not in {"both", "lan0", "wifi0"}:
     fail("NETWORK_INTERFACE must be both, lan0, or wifi0.")
 
+NOTIFY_TOPIC = os.environ.get("NOTIFY_TOPIC", "samovar_test").strip() or "samovar_test"
+if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", NOTIFY_TOPIC):
+    fail("NOTIFY_TOPIC must contain only letters, digits, dots, underscores, or hyphens.")
+NOTIFY_URL = f"https://ntfy.sh/{NOTIFY_TOPIC}"
+
 # ---------------------------------------------------------------------------
 # Common required inputs (both modes)
 # ---------------------------------------------------------------------------
@@ -188,6 +193,40 @@ def build_apt() -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
+# Notifications (best-effort; never block installation)
+# ---------------------------------------------------------------------------
+
+def _notify_live_command(message: str) -> str:
+    url = shlex.quote(NOTIFY_URL)
+    body = shlex.quote(message)
+    return (
+        f"url={url}; body={body}; "
+        "if command -v curl >/dev/null 2>&1; then "
+        "curl --fail --silent --show-error --connect-timeout 5 --max-time 15 "
+        ' -H "Title: Samovar installer" --data-raw "$body" "$url" >/dev/null 2>&1 || true; '
+        "elif command -v wget >/dev/null 2>&1; then "
+        "wget --quiet --timeout=15 --header='Title: Samovar installer' "
+        ' --post-data="$body" -O - "$url" >/dev/null 2>&1 || true; '
+        "fi; exit 0"
+    )
+
+
+_notify_script = f"""#!/usr/bin/env bash
+set -u
+URL={shlex.quote(NOTIFY_URL)}
+MESSAGE="${{1:-}}"
+if command -v curl >/dev/null 2>&1; then
+    curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+        -H "Title: Samovar installer" --data-raw "$MESSAGE" "$URL" >/dev/null 2>&1 || true
+elif command -v wget >/dev/null 2>&1; then
+    wget --quiet --timeout=15 --header="Title: Samovar installer" \
+        --post-data="$MESSAGE" -O - "$URL" >/dev/null 2>&1 || true
+fi
+exit 0
+"""
+
+
+# ---------------------------------------------------------------------------
 # Generic bootstrap script (kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
@@ -198,6 +237,8 @@ set -Eeuo pipefail
 # installed system (cloud-init's first boot), never inside the live installer.
 exec >>/var/log/netbird-enroll.log 2>&1
 echo "$(date -Is) netbird-enroll: started"
+notify() {{ /usr/local/sbin/samovar-notify "$1" || true; }}
+trap 'rc=$?; notify "Ошибка provisioning (код $rc)"' ERR
 
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
 
@@ -219,6 +260,7 @@ getent ahosts {default_archive_host} || true
 apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 update
 DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 install -y \\
     curl ca-certificates docker.io docker-compose-v2 ufw
+notify "Сеть доступна, базовые пакеты установлены"
 
 install -d -m 0755 /etc/docker /etc/systemd/journald.conf.d
 cat > /etc/docker/daemon.json <<'EOF'
@@ -256,15 +298,18 @@ ufw allow out on wt0
 ufw --force enable
 
 NETBIRD_HOSTNAME={shlex.quote(hostname)}
+notify "Началась установка NetBird"
 echo "$(date -Is) netbird-enroll: installing NetBird"
 curl -fsSL https://pkgs.netbird.io/install.sh | sh
 command -v netbird >/dev/null
+notify "NetBird установлен"
 
 echo "$(date -Is) netbird-enroll: registering $NETBIRD_HOSTNAME"
 netbird up --setup-key {shlex.quote(netbird_setup_key)} --hostname "$NETBIRD_HOSTNAME"
 netbird status
 echo "$(date -Is) netbird-enroll: enrollment completed as $NETBIRD_HOSTNAME"
 logger -t netbird-enroll "NetBird enrollment completed as $NETBIRD_HOSTNAME"
+notify "NetBird подключён, provisioning завершён"
 install -D -m 0644 /dev/null /var/lib/netbird-enroll.done
 """
 
@@ -416,8 +461,10 @@ echo 'Samovar preflight: all checks passed'
 """
 
 samovar_early_commands: list[list[str]] = [
+    ["sh", "-c", _notify_live_command("Установщик запущен")],
     ["sh", "-c", f"cat > /run/samovar-preflight.sh << 'PREFLIGHT_EOF'\n{_preflight_script}PREFLIGHT_EOF"],
     ["sh", "-c", "chmod +x /run/samovar-preflight.sh && bash /run/samovar-preflight.sh"],
+    ["sh", "-c", _notify_live_command("Проверка оборудования пройдена")],
 ]
 
 
@@ -504,6 +551,9 @@ set -Eeuo pipefail
 LOGFILE=/var/log/samovar-provision.log
 exec >>"$LOGFILE" 2>&1
 echo "$(date -Is) samovar-provision: started"
+notify() {{ /usr/local/sbin/samovar-notify "$1" || true; }}
+trap 'rc=$?; notify "Ошибка provisioning (код $rc)"' ERR
+notify "Началась настройка установленной системы"
 
 # ── Prevent repeated runs ────────────────────────────────────────────────────
 DONE_FILE=/var/lib/samovar-provision.done
@@ -573,16 +623,19 @@ apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 update
 DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 install -y \\
     curl ca-certificates docker.io docker-compose-v2 ufw \\
     smartmontools btop tmux git jq
+notify "Базовые пакеты установлены"
 
 # ── NetBird client ────────────────────────────────────────────────────────────
 # The recovery bootstrap invokes netbird, so install it before that service is
 # allowed to run. A bounded download prevents a dead network from blocking the
 # whole first-boot provisioning attempt forever; systemd retries failed attempts.
+notify "Началась установка NetBird"
 echo "$(date -Is) samovar-provision: installing NetBird"
 curl --fail --silent --show-error --location \\
     --connect-timeout 15 --max-time 120 \\
     https://pkgs.netbird.io/install.sh | sh
 command -v netbird
+notify "NetBird установлен"
 
 # ── Docker ───────────────────────────────────────────────────────────────────
 install -d -m 0755 /etc/docker
@@ -619,6 +672,7 @@ printf '#!/bin/sh\\nexec docker compose "$@"\\n' > /usr/local/bin/compose
 
 echo "$(date -Is) samovar-provision: completed"
 logger -t samovar-provision "Samovar provisioning completed"
+notify "Базовая настройка системы завершена"
 install -D -m 0644 /dev/null "$DONE_FILE"
 """
 
@@ -760,6 +814,12 @@ def _load_samovar_config_sig() -> str:
 def build_write_files_generic() -> list[dict[str, str]]:
     return [
         {
+            "path": "/usr/local/sbin/samovar-notify",
+            "owner": "root:root",
+            "permissions": "0700",
+            "content": _notify_script,
+        },
+        {
             "path": f"/etc/sudoers.d/99-{username}-nopasswd",
             "owner": "root:root",
             "permissions": "0440",
@@ -794,6 +854,13 @@ def build_write_files_generic() -> list[dict[str, str]]:
 
 def build_write_files_samovar() -> list[dict[str, str]]:
     files: list[dict[str, str]] = []
+
+    files.append({
+        "path": "/usr/local/sbin/samovar-notify",
+        "owner": "root:root",
+        "permissions": "0700",
+        "content": _notify_script,
+    })
 
     # ── sudoers ──────────────────────────────────────────────────────────────
     if sudo_nopasswd:
@@ -917,6 +984,7 @@ def build_runcmd_generic() -> list[list[str]]:
     return [
         ["systemctl", "daemon-reload"],
         ["systemctl", "enable", "--now", "netbird-enroll.service"],
+        ["/usr/local/sbin/samovar-notify", "Установка завершена, компьютер выключается"],
     ]
 
 
@@ -932,6 +1000,7 @@ def build_runcmd_samovar() -> list[list[str]]:
         ["systemctl", "enable", "--now", "samovar-recovery.timer"],
         # Enable fstrim for SSDs
         ["systemctl", "enable", "fstrim.timer"],
+        ["/usr/local/sbin/samovar-notify", "Установка завершена, компьютер выключается"],
     ]
 
 
@@ -963,6 +1032,7 @@ if not SAMOVAR_MODE:
                 },
             },
             "updates": "security",
+            "early-commands": [["sh", "-c", _notify_live_command("Установщик запущен")]],
             # A reboot with the USB stick still first in the UEFI boot order starts
             # the live installer again.  Power off instead, so removing the stick
             # is an explicit and safe post-install step.

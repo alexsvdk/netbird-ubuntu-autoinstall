@@ -448,6 +448,7 @@ $AptFallback = if ($env:APT_FALLBACK) { $env:APT_FALLBACK } else { "offline-inst
 $NetworkInterface = if ($env:NETWORK_INTERFACE) { $env:NETWORK_INTERFACE } else { "both" }
 $DiskSerialPrefix = if ($null -ne $env:DISK_SERIAL_PREFIX) { $env:DISK_SERIAL_PREFIX } else { "" }
 $SwapSizeGib = if ($env:SWAP_SIZE_GIB) { $env:SWAP_SIZE_GIB } else { "1" }
+$NotifyTopic = if ($env:NOTIFY_TOPIC) { $env:NOTIFY_TOPIC } else { "samovar_test" }
 $SamovarConfigFile = if ($env:SAMOVAR_CONFIG_FILE) { $env:SAMOVAR_CONFIG_FILE } else { "samovar-config.json" }
 $AllowedSigners = if ($env:ALLOWED_SIGNERS) { $env:ALLOWED_SIGNERS } else { "" }
 $SshPublicKeys = if ($env:SSH_PUBLIC_KEYS) { $env:SSH_PUBLIC_KEYS } else { $SshPublicKey }
@@ -503,6 +504,7 @@ trap - EXIT
       -e "NETWORK_INTERFACE=$NetworkInterface" `
       -e "DISK_SERIAL_PREFIX=$DiskSerialPrefix" `
       -e "SWAP_SIZE_GIB=$SwapSizeGib" `
+      -e "NOTIFY_TOPIC=$NotifyTopic" `
       -e "SAMOVAR_MODE=$SamovarMode" `
       -e "SAMOVAR_CONFIG_FILE=$SamovarConfigFile" `
       -e "ALLOWED_SIGNERS=$AllowedSigners" `
@@ -587,6 +589,7 @@ python3 /work/validate-autoinstall-iso.py \
       "-e", "ISO_NAME=$IsoName",
       "-e", "OUTPUT_ISO_PATH=$ContainerOutputIsoPath",
       "-e", "NETWORK_INTERFACE=$NetworkInterface",
+      "-e", "NOTIFY_TOPIC=$NotifyTopic",
       "-v", "${DockerWorkDir}:/work",
       "-w", "/work"
     )

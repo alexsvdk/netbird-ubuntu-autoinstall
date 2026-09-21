@@ -24,6 +24,7 @@ This kit builds an Ubuntu Server 24.04.4 ISO that:
 - powers off after installation instead of rebooting into the USB installer again;
 - installs and enrolls NetBird on the first boot of the installed system, with the chosen hostname as the peer name;
 - retries NetBird enrollment until the network is available and records its progress in `/var/log/netbird-enroll.log`;
+- sends best-effort installation status notifications to the configured `ntfy.sh` topic;
 - limits each Docker container's logs to 10 rotated files × 10 MiB (about 100 MiB);
 - stores the system journal persistently and caps it at about 100 MiB with automatic rotation and cleanup;
 - enables UFW with OpenSSH allowed and full trust for NetBird traffic on `wt0` (in and out).
@@ -63,8 +64,11 @@ Supported variables (see `.env.example`):
 | `APT_MIRROR` | Optional preferred primary mirror URI (prepended to candidates) |
 | `APT_SECURITY_MIRROR` | Optional security-pocket mirror URI |
 | `APT_FALLBACK` | If no mirror works: `offline-install` (default), `abort`, or `continue-anyway` |
+| `NOTIFY_TOPIC` | ntfy.sh topic for installation status notifications (default `samovar_test`) |
 
 Non-empty values from `.env` (or the shell, except bare `HOSTNAME`) skip the matching interactive prompt. Empty values still prompt at build time.
+
+To receive progress updates, install the **ntfy** app and subscribe to the same `NOTIFY_TOPIC`. The default topic is `samovar_test`; use a unique topic for a real installation.
 
 ### APT mirrors by region
 

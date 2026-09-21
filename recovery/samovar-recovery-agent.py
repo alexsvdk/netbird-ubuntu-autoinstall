@@ -81,6 +81,7 @@ NETWORK_INTERFACE = (
 
 # Healthcheck endpoints used to verify default route (spec §10.3)
 HEALTHCHECK_ENDPOINTS = ["1.1.1.1", "8.8.8.8"]
+NOTIFY_SCRIPT = "/usr/local/sbin/samovar-notify"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -115,6 +116,20 @@ def _build_logger() -> logging.Logger:
 
 
 log = _build_logger()
+
+
+def notify(message: str) -> None:
+    """Send a best-effort installation status notification without blocking recovery."""
+    try:
+        subprocess.run(
+            [NOTIFY_SCRIPT, message],
+            check=False,
+            timeout=20,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1384,6 +1399,7 @@ def run_bootstrap() -> int:
         return 0
 
     log.info("Bootstrap mode: reading config from %s", inbox)
+    notify("Началась настройка NetBird и конфигурации")
 
     try:
         cfg, raw = load_and_verify_config(json_path, sig_path)
@@ -1391,9 +1407,11 @@ def run_bootstrap() -> int:
         check_replay(cfg, state)
     except (SignatureError, SchemaError, ReplayError) as exc:
         log.error("Bootstrap config rejected: %s", exc)
+        notify("Ошибка: конфигурация отклонена")
         return 1
     except RecoveryError as exc:
         log.error("Bootstrap config load/verify error: %s", exc)
+        notify("Ошибка загрузки конфигурации")
         return 1
 
     # Stage and apply
@@ -1401,6 +1419,7 @@ def run_bootstrap() -> int:
         staged_json, staged_sig = copy_to_staging(json_path, sig_path)
     except OSError as exc:
         log.error("Could not stage bootstrap config: %s", exc)
+        notify("Ошибка подготовки конфигурации")
         return 1
 
     try:
@@ -1410,11 +1429,13 @@ def run_bootstrap() -> int:
         _secure_delete(json_path)
         _secure_delete(sig_path)
         log.info("Bootstrap inbox cleared after successful apply.")
+        notify("NetBird подключён, конфигурация применена")
         return 0
     except RecoveryError as exc:
         log.error(
             "Bootstrap config apply failed: %s — leaving in staging for retry.", exc
         )
+        notify("Ошибка применения конфигурации; повтор будет позже")
         return 1
 
 
