@@ -857,7 +857,7 @@ def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
 def _netbird_current_profile() -> str | None:
     """Return the name of the currently active NetBird profile, or None."""
     try:
-        result = _run(["netbird", "profiles", "list"], check=False, timeout=15)
+        result = _run(["netbird", "profile", "list"], check=False, timeout=15)
         stdout = (result.stdout or b"").decode()
         for line in stdout.splitlines():
             if "active" in line.lower() or "*" in line:
@@ -929,12 +929,12 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     # Create new profile
     try:
         _run(
-            ["netbird", "profiles", "add", profile_name],
+            ["netbird", "profile", "add", profile_name],
             check=False,
             timeout=15,
         )
         _run(
-            ["netbird", "profiles", "use", profile_name],
+            ["netbird", "profile", "select", profile_name],
             timeout=15,
         )
         log.info("Switched to NetBird profile: %s", profile_name)
@@ -989,7 +989,7 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     if old_profile and old_profile != profile_name:
         try:
             _run(
-                ["netbird", "profiles", "delete", old_profile],
+                ["netbird", "profile", "remove", old_profile],
                 check=False,
                 timeout=15,
             )
@@ -1008,7 +1008,7 @@ def _netbird_rollback(old_profile: str | None) -> None:
         return
     log.info("Rolling back to NetBird profile: %s", old_profile)
     try:
-        _run(["netbird", "profiles", "use", old_profile], check=False, timeout=15)
+        _run(["netbird", "profile", "select", old_profile], check=False, timeout=15)
         _run(["netbird", "up"], check=False, timeout=60)
         log.info("NetBird rolled back to profile: %s", old_profile)
     except RecoveryError as exc:

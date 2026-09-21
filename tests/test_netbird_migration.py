@@ -97,7 +97,7 @@ class NetBirdManager:
         key_path = None
         try:
             # Switch to new profile
-            self._run(["profile", "use", new_profile])
+            self._run(["profile", "select", new_profile])
 
             # Write setup key to temp file
             key_path = self._write_setup_key_file(setup_key)
@@ -123,14 +123,14 @@ class NetBirdManager:
 
             # Success — delete old profile
             if old_profile and old_profile != new_profile:
-                self._run(["profile", "delete", old_profile], check=False)
+                self._run(["profile", "remove", old_profile], check=False)
                 self._log(f"Deleted old profile: {old_profile}")
 
         except NetBirdError:
             # Rollback: restore old profile
             self._log(f"Rolling back to profile: {old_profile}")
             try:
-                self._run(["profile", "use", old_profile], check=False)
+                self._run(["profile", "select", old_profile], check=False)
                 self._run(["up", "--hostname", "samovar"], check=False)
             except Exception:  # noqa: BLE001
                 pass
@@ -354,7 +354,7 @@ class TestNetBirdManagerRollback(unittest.TestCase):
                 )
 
         # After failure, should have attempted to switch back to old profile
-        profile_use_calls = [c for c in calls_made if "profile" in c and "use" in c]
+        profile_use_calls = [c for c in calls_made if "profile" in c and "select" in c]
         # Should have at least 2: switch to new, then switch back to old
         self.assertGreaterEqual(len(profile_use_calls), 2)
 
@@ -435,7 +435,7 @@ class TestNetBirdManagerRollback(unittest.TestCase):
                 generation=1,
             )
 
-        delete_calls = [c for c in calls_made if "profile" in c and "delete" in c]
+        delete_calls = [c for c in calls_made if "profile" in c and "remove" in c]
         self.assertTrue(len(delete_calls) > 0, "Expected 'profile delete' call on success")
 
 
