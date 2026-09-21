@@ -707,6 +707,7 @@ Wants=network-online.target
 
 [Service]
 Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
+Environment=HOME=/root
 Type=simple
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --run
 Restart=on-failure
@@ -737,6 +738,7 @@ After=network-online.target
 
 [Service]
 Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
+Environment=HOME=/root
 Type=oneshot
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb
 TimeoutStartSec=120
@@ -759,6 +761,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
+Environment=HOME=/root
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/samovar-recovery-agent.py --bootstrap

@@ -192,13 +192,19 @@ def _run(
     """Run a subprocess; raise RecoveryError with sanitised output on failure."""
     log.debug("exec: %s", " ".join(cmd))
     try:
+        command_env = env
+        if cmd and cmd[0] == "netbird":
+            # systemd services do not provide HOME. NetBird's profile CLI
+            # needs it to select the root-owned profile store.
+            command_env = dict(os.environ if env is None else env)
+            command_env.setdefault("HOME", "/root")
         result = subprocess.run(
             cmd,
             input=stdin_data,
             capture_output=capture,
             text=False,
             timeout=timeout,
-            env=env,
+            env=command_env,
         )
     except FileNotFoundError as exc:
         raise RecoveryError(f"Command not found: {cmd[0]}") from exc

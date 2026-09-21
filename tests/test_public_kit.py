@@ -135,6 +135,7 @@ class PublicKitTests(unittest.TestCase):
             ["systemctl", "enable", "--now", "samovar-recovery-bootstrap.service"],
             document["autoinstall"]["user-data"]["runcmd"],
         )
+        self.assertIn("Environment=HOME=/root", files_by_path["/etc/systemd/system/samovar-recovery-bootstrap.service"])
         recovery_scan = files_by_path["/etc/systemd/system/samovar-recovery-scan.service"]
         self.assertIn("ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb", recovery_scan)
         self.assertNotIn(" --scan\n", recovery_scan)

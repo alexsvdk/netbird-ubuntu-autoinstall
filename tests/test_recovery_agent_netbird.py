@@ -18,6 +18,19 @@ agent = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(agent)
 
 
+def test_netbird_run_supplies_home_for_systemd_services() -> None:
+    result = subprocess.CompletedProcess(
+        ["netbird", "profile", "list"], 0, b"", b""
+    )
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("subprocess.run", return_value=result) as mock_run,
+    ):
+        agent._run(["netbird", "profile", "list"])
+
+    assert mock_run.call_args.kwargs["env"]["HOME"] == "/root"
+
+
 def test_retry_uses_unique_netbird_profile_names() -> None:
     commands: list[list[str]] = []
 
