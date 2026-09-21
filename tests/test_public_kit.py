@@ -119,6 +119,7 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("https://pkgs.netbird.io/install.sh | sh", provision)
         self.assertIn("command -v netbird", provision)
         self.assertIn("install -d -m 0755 /etc/mihomo /var/lib/mihomo", provision)
+        self.assertIn("meta-rules-dat/releases/latest/download/geoip.metadb", provision)
         self.assertNotIn("/usr/local/bin/mihomo", provision)
         self.assertIn("systemctl enable mihomo.service", provision)
         self.assertLess(
@@ -135,6 +136,7 @@ class PublicKitTests(unittest.TestCase):
         self.assertNotIn("ExecStart=/usr/local/bin/mihomo", mihomo_service)
         mihomo_compose = files_by_path["/etc/mihomo/compose.yml"]
         self.assertIn("metacubex/mihomo:latest", mihomo_compose)
+        self.assertIn('entrypoint: ["/mihomo"]', mihomo_compose)
         self.assertNotIn("network_mode: host", mihomo_compose)
         self.assertIn('"127.0.0.1:7890:7890"', mihomo_compose)
         self.assertIn('"127.0.0.1:9090:9090"', mihomo_compose)

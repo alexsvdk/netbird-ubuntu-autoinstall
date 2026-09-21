@@ -112,6 +112,27 @@ def test_mihomo_validation_uses_the_compose_image() -> None:
         "/root/.config/mihomo/.samovar-test.yaml",
     ]
 
+def test_failed_mihomo_does_not_rotate_netbird_profile() -> None:
+    config = {
+        "generation": 2026091901,
+        "target": "samovar",
+        "mihomo": {"enabled": True},
+        "netbird": {"management_url": "https://api.netbird.io:443", "setup_key": "secret"},
+    }
+    with (
+        patch.object(agent, "apply_mihomo", side_effect=agent.RecoveryError("broken")),
+        patch.object(agent, "apply_netbird") as apply_netbird,
+    ):
+        try:
+            agent.apply_config(config, b"{}", source_label="test")
+        except agent.RecoveryError:
+            pass
+        else:
+            raise AssertionError("apply_config should fail")
+
+    apply_netbird.assert_not_called()
+
+
 def test_mihomo_runtime_config_is_bridge_only() -> None:
     source = {
         "allow-lan": False,

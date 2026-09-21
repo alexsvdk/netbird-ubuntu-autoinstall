@@ -48,6 +48,10 @@ MIHOMO_CONFIG = "/etc/mihomo/config.yaml"
 MIHOMO_COMPOSE_FILE = "/etc/mihomo/compose.yml"
 MIHOMO_COMPOSE_ENV = "/etc/mihomo/compose.env"
 MIHOMO_COMPOSE_SERVICE = "mihomo"
+MIHOMO_GEOIP_FILE = "/etc/mihomo/geoip.metadb"
+MIHOMO_GEOIP_URL = (
+    "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb"
+)
 SAMOVAR_USB_LABEL = "SAMOVARCFG"
 MAX_CONFIG_BYTES = 4 * 1024 * 1024  # 4 MiB
 SCHEMA_VERSION = 1
@@ -1139,6 +1143,51 @@ def _prepare_mihomo_runtime_config(config_dict: dict) -> dict:
     return runtime
 
 
+def _ensure_mihomo_geoip() -> None:
+    """Ensure Mihomo has its GeoIP database before config validation."""
+    geoip_path = Path(MIHOMO_GEOIP_FILE)
+    try:
+        if geoip_path.is_file() and geoip_path.stat().st_size > 0:
+            return
+    except OSError:
+        pass
+
+    geoip_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=geoip_path.parent, prefix=".geoip-", delete=False
+    ) as tmp_fh:
+        tmp_path = Path(tmp_fh.name)
+
+    try:
+        _run(
+            [
+                "curl",
+                "--fail",
+                "--location",
+                "--connect-timeout",
+                "5",
+                "--max-time",
+                "60",
+                "--retry",
+                "2",
+                "--output",
+                str(tmp_path),
+                MIHOMO_GEOIP_URL,
+            ],
+            timeout=75,
+        )
+        if tmp_path.stat().st_size == 0:
+            raise RecoveryError("Downloaded Mihomo GeoIP database is empty.")
+        tmp_path.chmod(0o644)
+        tmp_path.replace(geoip_path)
+        log.info("Mihomo GeoIP database prepared at %s.", geoip_path)
+    except (OSError, RecoveryError) as exc:
+        raise RecoveryError(f"Mihomo GeoIP database preparation failed: {exc}") from exc
+    finally:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
+
+
 def _mihomo_compose_command(*args: str) -> list[str]:
     """Build a Compose command for the host Mihomo service."""
     return [
@@ -1229,6 +1278,9 @@ def apply_mihomo(mihomo_cfg: dict) -> str | None:
     tmp_path.chmod(0o600)
 
     try:
+        # Prepare required local geodata before Mihomo validation. This avoids
+        # a network download from inside the short-lived validation container.
+        _ensure_mihomo_geoip()
         # Validate syntax with mihomo -t -f
         _validate_mihomo_config_file(tmp_path)
 
@@ -1359,7 +1411,11 @@ def apply_config(cfg: dict, raw: bytes, *, source_label: str) -> None:
         except RecoveryError as exc:
             errors.append(f"mihomo: {exc}")
 
-    if "netbird" in cfg:
+    if errors:
+        log.warning(
+            "Skipping NetBird changes because an earlier configuration step failed."
+        )
+    elif "netbird" in cfg:
         try:
             active_netbird_profile = apply_netbird(cfg["netbird"], generation)
         except RecoveryError as exc:

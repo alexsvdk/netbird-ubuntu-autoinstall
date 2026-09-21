@@ -635,6 +635,19 @@ notify "Базовые пакеты установлены"
 # The image is selected in /etc/mihomo/compose.env and can be updated without
 # rebuilding the ISO or downloading a host binary.
 install -d -m 0755 /etc/mihomo /var/lib/mihomo
+MIHOMO_GEOIP_FILE=/etc/mihomo/geoip.metadb
+MIHOMO_GEOIP_URL=https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb
+if [ ! -s "$MIHOMO_GEOIP_FILE" ]; then
+  if curl --fail --location --connect-timeout 5 --max-time 60 --retry 2 \
+      --output "${{MIHOMO_GEOIP_FILE}}.tmp" "$MIHOMO_GEOIP_URL"; then
+    install -m 0644 "${{MIHOMO_GEOIP_FILE}}.tmp" "$MIHOMO_GEOIP_FILE"
+    rm -f "${{MIHOMO_GEOIP_FILE}}.tmp"
+    echo "$(date -Is) samovar-provision: Mihomo GeoIP database prepared"
+  else
+    rm -f "${{MIHOMO_GEOIP_FILE}}.tmp"
+    echo "$(date -Is) samovar-provision: WARNING GeoIP download failed; recovery will retry" >&2
+  fi
+fi
 systemctl daemon-reload
 systemctl enable mihomo.service
 

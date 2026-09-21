@@ -484,6 +484,22 @@ fi
 printf 'MIHOMO_IMAGE=%s\n' "${MIHOMO_IMAGE}" > /etc/mihomo/compose.env
 chmod 0600 /etc/mihomo/compose.env
 
+# Prepare GeoIP locally so config validation does not depend on Docker network
+# access to GitHub release assets.
+MIHOMO_GEOIP_FILE="/etc/mihomo/geoip.metadb"
+MIHOMO_GEOIP_URL="https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb"
+if [[ ! -s "${MIHOMO_GEOIP_FILE}" ]]; then
+    MIHOMO_GEOIP_TMP="${MIHOMO_GEOIP_FILE}.tmp"
+    if curl --fail --location --connect-timeout 5 --max-time 60 --retry 2 \
+        --output "${MIHOMO_GEOIP_TMP}" "${MIHOMO_GEOIP_URL}"; then
+        install -o root -g root -m 0644 "${MIHOMO_GEOIP_TMP}" "${MIHOMO_GEOIP_FILE}"
+        log "Mihomo GeoIP database prepared."
+    else
+        rm -f "${MIHOMO_GEOIP_TMP}"
+        log "WARNING: Mihomo GeoIP download failed; recovery will retry before validation."
+    fi
+fi
+
 # Install proxy-run and proxy-shell wrappers
 for wrapper in proxy-run proxy-shell; do
     SRC="${SCRIPT_DIR_MIHOMO}/${wrapper}"

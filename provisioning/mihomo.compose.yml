@@ -12,7 +12,7 @@ services:
     ports:
       - "127.0.0.1:7890:7890"
       - "127.0.0.1:9090:9090"
-    entrypoint: ["mihomo"]
+    entrypoint: ["/mihomo"]
     command: ["-d", "/root/.config/mihomo"]
     volumes:
       - /etc/mihomo:/root/.config/mihomo:ro
