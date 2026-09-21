@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -23,6 +24,10 @@ def require_mapping(value: Any, name: str) -> dict[str, Any]:
 
 
 def validate_yaml(path: Path) -> None:
+    network_interface = os.environ.get("NETWORK_INTERFACE", "both").strip().lower() or "both"
+    if network_interface not in {"both", "lan0", "wifi0"}:
+        fail("NETWORK_INTERFACE must be both, lan0, or wifi0.")
+
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
@@ -106,11 +111,12 @@ def validate_yaml(path: Path) -> None:
 
         network = require_mapping(autoinstall.get("network"), "autoinstall.network")
         ethernets = require_mapping(network.get("ethernets", {}), "autoinstall.network.ethernets")
-        if "lan0" not in ethernets:
-            fail("Samovar network must contain lan0 interface.")
-        wifis = require_mapping(network.get("wifis", {}), "autoinstall.network.wifis")
-        if "wifi0" not in wifis:
-            fail("Samovar network must contain wifi0 interface.")
+        if network_interface in {"both", "lan0"} and "lan0" not in ethernets:
+            fail(f"Samovar network must contain lan0 interface for NETWORK_INTERFACE={network_interface}.")
+        if network_interface in {"both", "wifi0"}:
+            wifis = require_mapping(network.get("wifis", {}), "autoinstall.network.wifis")
+            if "wifi0" not in wifis:
+                fail(f"Samovar network must contain wifi0 interface for NETWORK_INTERFACE={network_interface}.")
 
 
 def validate_grub(path: Path, *, require_timeout: bool = True) -> None:

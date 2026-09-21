@@ -582,6 +582,7 @@ python3 /work/validate-autoinstall-iso.py \
       "run", "--rm",
       "-e", "ISO_NAME=$IsoName",
       "-e", "OUTPUT_ISO_PATH=$ContainerOutputIsoPath",
+      "-e", "NETWORK_INTERFACE=$NetworkInterface",
       "-v", "${DockerWorkDir}:/work",
       "-w", "/work"
     )

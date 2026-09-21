@@ -525,6 +525,7 @@ rm -f "$OUTPUT_ISO_PATH"
 docker run --rm \
   -e ISO_NAME="$ISO_NAME" \
   -e OUTPUT_ISO_PATH="$OUTPUT_ISO_CONTAINER_PATH" \
+  -e NETWORK_INTERFACE="$NETWORK_INTERFACE" \
   -v "$DOCKER_WORK_DIR:/work" \
   "${DOCKER_OUTPUT_MOUNT[@]}" \
   ubuntu:24.04 bash -euc '

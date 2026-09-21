@@ -220,6 +220,25 @@ class TestSamovarIsoValidation(unittest.TestCase):
         self.assertIn("ufw allow in on lan0", provision)
         self.assertNotIn("ufw allow in on wifi0", provision)
 
+    def test_lan0_profile_passes_iso_validation(self) -> None:
+        render, document = self._render_samovar_with_interface("lan0")
+        self.assertEqual(render.returncode, 0, render.stderr)
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "autoinstall.yaml"
+            yaml_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            grub_path = Path(td) / "grub.cfg"
+            grub_path.write_text(SAMPLE_VALID_GRUB, encoding="utf-8")
+            env = os.environ.copy()
+            env["NETWORK_INTERFACE"] = "lan0"
+            res = subprocess.run(
+                [sys.executable, str(VALIDATE), str(yaml_path), str(grub_path)],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(ROOT),
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+
     def test_invalid_network_interface_rejected(self) -> None:
         res, _ = self._render_samovar_with_interface("ens4")
         self.assertNotEqual(res.returncode, 0)
