@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 PATCH_GRUB = ROOT / "patch-grub.py"
 RENDER = ROOT / "render-autoinstall.py"
@@ -81,6 +83,45 @@ class PublicKitTests(unittest.TestCase):
             self.assertIn("autoinstall", patched)
             self.assertIn("fsck.mode=skip", patched)
             self.assertRegex(patched, r"(?m)^\s*set\s+timeout\s*=\s*3\s*$")
+
+    def test_samovar_provision_installs_netbird_before_bootstrap(self) -> None:
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOSTNAME": "samovar",
+                "USERNAME": "server",
+                "PASSWORD_HASH": "$6$rounds=4096$testsalt$testhashvalueforunittestonly",
+                "SSH_PUBLIC_KEYS": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKeyMaterialOnlyNotReal test@example",
+                "SAMOVAR_MODE": "samovar",
+                "SAMOVAR_CONFIG_FILE": "/does-not-exist/samovar-config.json",
+                "ARCH": "amd64",
+                "APT_REGION": "auto",
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [sys.executable, str(RENDER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=tmp,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        document = yaml.safe_load(result.stdout)
+        files = document["autoinstall"]["user-data"]["write_files"]
+        provision = next(
+            entry["content"]
+            for entry in files
+            if entry["path"] == "/usr/local/sbin/samovar-provision.sh"
+        )
+        self.assertIn("https://pkgs.netbird.io/install.sh | sh", provision)
+        self.assertIn("command -v netbird", provision)
+        self.assertLess(
+            provision.index("installing NetBird"),
+            provision.index("systemctl enable --now docker.service"),
+        )
 
     def test_render_and_validate_real_scripts(self) -> None:
         env = os.environ.copy()

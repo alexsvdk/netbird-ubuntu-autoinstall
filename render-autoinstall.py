@@ -574,6 +574,16 @@ DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Time
     curl ca-certificates docker.io docker-compose-v2 ufw \\
     smartmontools btop tmux git jq
 
+# ── NetBird client ────────────────────────────────────────────────────────────
+# The recovery bootstrap invokes netbird, so install it before that service is
+# allowed to run. A bounded download prevents a dead network from blocking the
+# whole first-boot provisioning attempt forever; systemd retries failed attempts.
+echo "$(date -Is) samovar-provision: installing NetBird"
+curl --fail --silent --show-error --location \\
+    --connect-timeout 15 --max-time 120 \\
+    https://pkgs.netbird.io/install.sh | sh
+command -v netbird
+
 # ── Docker ───────────────────────────────────────────────────────────────────
 install -d -m 0755 /etc/docker
 cat > /etc/docker/daemon.json <<'EOF'
