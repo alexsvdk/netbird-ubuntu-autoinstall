@@ -110,6 +110,12 @@ class PublicKitTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         document = yaml.safe_load(result.stdout)
+        early_commands = document["autoinstall"]["early-commands"]
+        preflight_script = next(
+            command[2] for command in early_commands if "PREFLIGHT_EOF" in command[2]
+        )
+        self.assertIn("exit 0", preflight_script)
+        self.assertIn("/run/samovar-preflight.log", early_commands[2][2])
         files = document["autoinstall"]["user-data"]["write_files"]
         provision = next(
             entry["content"]
@@ -195,6 +201,14 @@ class PublicKitTests(unittest.TestCase):
             self.assertIn(f"https://ntfy.sh/{topic}", notifier)
             self.assertIn("--proxy http://127.0.0.1:7890", notifier)
             self.assertIn("Установщик запущен", document["early-commands"][0][2])
+            if len(document["early-commands"]) > 2:
+                preflight_script = next(
+                    command[2]
+                    for command in document["early-commands"]
+                    if "PREFLIGHT_EOF" in command[2]
+                )
+                self.assertIn("exit 0", preflight_script)
+                self.assertIn("/run/samovar-preflight.log", document["early-commands"][2][2])
 
     def test_mihomo_image_default_and_custom_values_reach_yaml(self) -> None:
         base_env = os.environ.copy()

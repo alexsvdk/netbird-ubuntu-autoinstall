@@ -473,12 +473,18 @@ for serial in {SYSTEM_SSD_SERIAL} {DATA_SSD_SERIAL} {HDD_SERIAL}; do
   [ "$count" -eq 1 ] || {{ echo "ERROR: Serial $serial found $count times (expected 1)"; exit 1; }}
 done
 echo 'Samovar preflight: all checks passed'
+exit 0
 """
 
 samovar_early_commands: list[list[str]] = [
     ["sh", "-c", _notify_live_command("Установщик запущен")],
     ["sh", "-c", f"cat > /run/samovar-preflight.sh << 'PREFLIGHT_EOF'\n{_preflight_script}PREFLIGHT_EOF"],
-    ["sh", "-c", "chmod +x /run/samovar-preflight.sh && bash /run/samovar-preflight.sh"],
+    [
+        "sh",
+        "-c",
+        "chmod +x /run/samovar-preflight.sh && "
+        "bash /run/samovar-preflight.sh >/run/samovar-preflight.log 2>&1",
+    ],
     ["sh", "-c", _notify_live_command("Проверка оборудования пройдена")],
 ]
 
