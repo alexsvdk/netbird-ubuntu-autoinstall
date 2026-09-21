@@ -738,7 +738,7 @@ After=network-online.target
 [Service]
 Environment=NETWORK_INTERFACE={NETWORK_INTERFACE}
 Type=oneshot
-ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan
+ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb
 TimeoutStartSec=120
 """
 

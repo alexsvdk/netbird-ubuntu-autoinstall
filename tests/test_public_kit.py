@@ -135,6 +135,9 @@ class PublicKitTests(unittest.TestCase):
             ["systemctl", "enable", "--now", "samovar-recovery-bootstrap.service"],
             document["autoinstall"]["user-data"]["runcmd"],
         )
+        recovery_scan = files_by_path["/etc/systemd/system/samovar-recovery-scan.service"]
+        self.assertIn("ExecStart=/usr/local/sbin/samovar-recovery-agent.py --scan-usb", recovery_scan)
+        self.assertNotIn(" --scan\n", recovery_scan)
 
     def test_notify_topic_default_and_custom_values_reach_yaml(self) -> None:
         base_env = os.environ.copy()
