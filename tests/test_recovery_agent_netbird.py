@@ -111,3 +111,20 @@ def test_mihomo_validation_uses_the_compose_image() -> None:
         "-f",
         "/root/.config/mihomo/.samovar-test.yaml",
     ]
+
+def test_mihomo_runtime_config_is_bridge_only() -> None:
+    source = {
+        "allow-lan": False,
+        "bind-address": "127.0.0.1",
+        "external-controller": "127.0.0.1:9090",
+        "tun": {"enable": True, "auto-route": True},
+    }
+
+    runtime = agent._prepare_mihomo_runtime_config(source)
+
+    assert source["allow-lan"] is False
+    assert source["tun"]["enable"] is True
+    assert runtime["allow-lan"] is True
+    assert runtime["bind-address"] == "0.0.0.0"
+    assert runtime["external-controller"] == "0.0.0.0:9090"
+    assert runtime["tun"]["enable"] is False

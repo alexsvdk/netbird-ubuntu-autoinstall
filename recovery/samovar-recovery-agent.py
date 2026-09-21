@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import datetime
 import fcntl
 import hashlib
@@ -1111,6 +1112,33 @@ def mihomo_config_to_yaml(config_dict: dict) -> str:
     return header + _dict_to_yaml(config_dict, 0) + "\n"
 
 
+def _prepare_mihomo_runtime_config(config_dict: dict) -> dict:
+    """Adapt host Mihomo settings to the isolated bridge container.
+
+    The host instance is proxy-only. Its published ports are restricted to
+    127.0.0.1, while the container must listen on its own network interface.
+    Full TUN belongs in the dedicated VPN sidecar, not this management service.
+    """
+    runtime = copy.deepcopy(config_dict)
+
+    runtime["allow-lan"] = True
+    if runtime.get("bind-address") in {"127.0.0.1", "localhost", "::1"}:
+        runtime["bind-address"] = "0.0.0.0"
+
+    tun = runtime.get("tun")
+    if isinstance(tun, dict) and tun.get("enable"):
+        log.warning("Disabling TUN in host Mihomo runtime; use the VPN sidecar for TUN.")
+        tun["enable"] = False
+
+    controller = runtime.get("external-controller")
+    if isinstance(controller, str) and ":" in controller:
+        host, port = controller.rsplit(":", 1)
+        if host in {"127.0.0.1", "localhost", "::1"}:
+            runtime["external-controller"] = f"0.0.0.0:{port}"
+
+    return runtime
+
+
 def _mihomo_compose_command(*args: str) -> list[str]:
     """Build a Compose command for the host Mihomo service."""
     return [
@@ -1170,8 +1198,8 @@ def apply_mihomo(mihomo_cfg: dict) -> str | None:
         log.info("Mihomo is disabled in config; skipping.")
         return None
 
-    config_dict = mihomo_cfg.get("config", {})
-    log.info("Applying Mihomo configuration.")
+    config_dict = _prepare_mihomo_runtime_config(mihomo_cfg.get("config", {}))
+    log.info("Applying Mihomo configuration in bridge mode.")
 
     yaml_content = mihomo_config_to_yaml(config_dict)
     yaml_bytes = yaml_content.encode()

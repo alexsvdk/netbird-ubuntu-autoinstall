@@ -1,13 +1,8 @@
-# Proxy mode: HTTP/SOCKS proxy via Mihomo
-# Container traffic routed through Mihomo proxy on host.
+# Proxy mode: HTTP/SOCKS proxy via the host Mihomo Compose service.
+# The app joins the external `samovar-mihomo` network and reaches Mihomo as
+# `mihomo:7890`. The host service itself publishes 7890 only on 127.0.0.1.
 #
-# Mihomo must be running on the host and listening on 127.0.0.1:7890.
-# host.docker.internal resolves to the Docker host gateway IP.
-#
-# This mode does NOT require NET_ADMIN or TUN. The container uses a
-# standard bridge network and explicitly addresses the proxy.
-#
-# Management plane (SSH, NetBird) on the host is unaffected.
+# This mode does NOT require NET_ADMIN or TUN.
 #
 # Usage:
 #   cp proxy.compose.yml docker-compose.yml
@@ -17,11 +12,16 @@ services:
     image: your-image:latest
     restart: unless-stopped
     environment:
-      - HTTP_PROXY=http://host.docker.internal:7890
-      - HTTPS_PROXY=http://host.docker.internal:7890
-      - ALL_PROXY=socks5://host.docker.internal:7890
-      - http_proxy=http://host.docker.internal:7890
-      - https_proxy=http://host.docker.internal:7890
-      - all_proxy=socks5://host.docker.internal:7890
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - HTTP_PROXY=http://mihomo:7890
+      - HTTPS_PROXY=http://mihomo:7890
+      - ALL_PROXY=socks5://mihomo:7890
+      - http_proxy=http://mihomo:7890
+      - https_proxy=http://mihomo:7890
+      - all_proxy=socks5://mihomo:7890
+    networks:
+      - mihomo
+
+networks:
+  mihomo:
+    external: true
+    name: samovar-mihomo

@@ -135,7 +135,10 @@ class PublicKitTests(unittest.TestCase):
         self.assertNotIn("ExecStart=/usr/local/bin/mihomo", mihomo_service)
         mihomo_compose = files_by_path["/etc/mihomo/compose.yml"]
         self.assertIn("metacubex/mihomo:latest", mihomo_compose)
-        self.assertIn("network_mode: host", mihomo_compose)
+        self.assertNotIn("network_mode: host", mihomo_compose)
+        self.assertIn('"127.0.0.1:7890:7890"', mihomo_compose)
+        self.assertIn('"127.0.0.1:9090:9090"', mihomo_compose)
+        self.assertIn("name: samovar-mihomo", mihomo_compose)
         self.assertIn("cap_drop:", mihomo_compose)
         self.assertEqual(
             files_by_path["/etc/mihomo/compose.env"],
