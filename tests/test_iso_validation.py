@@ -185,6 +185,46 @@ class TestSamovarIsoValidation(unittest.TestCase):
             self.assertEqual(res.returncode, 0, res.stderr)
             self.assertIn("Validation passed", res.stdout)
 
+    def _render_samovar_with_interface(self, interface: str) -> tuple[subprocess.CompletedProcess[str], dict]:
+        env = os.environ.copy()
+        env.update(
+            {
+                "SAMOVAR_MODE": "samovar",
+                "NETWORK_INTERFACE": interface,
+                "HOSTNAME": "samovar",
+                "USERNAME": "alex",
+                "PASSWORD_HASH": "$6$rounds=4096$salt$hash",
+                "SSH_PUBLIC_KEYS": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey alex@samovar",
+                "ARCH": "amd64",
+                "APT_REGION": "auto",
+            }
+        )
+        res = subprocess.run(
+            [sys.executable, str(RENDER)],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(ROOT),
+        )
+        return res, yaml.safe_load(res.stdout) if res.returncode == 0 else {}
+
+    def test_lan0_profile_omits_wifi_configuration(self) -> None:
+        res, document = self._render_samovar_with_interface("lan0")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        network = document["autoinstall"]["network"]
+        self.assertIn("lan0", network["ethernets"])
+        self.assertNotIn("wifis", network)
+        files = document["autoinstall"]["user-data"]["write_files"]
+        self.assertNotIn("/etc/systemd/network/10-wifi0.link", {item["path"] for item in files})
+        provision = next(item["content"] for item in files if item["path"] == "/usr/local/sbin/samovar-provision.sh")
+        self.assertIn("ufw allow in on lan0", provision)
+        self.assertNotIn("ufw allow in on wifi0", provision)
+
+    def test_invalid_network_interface_rejected(self) -> None:
+        res, _ = self._render_samovar_with_interface("ens4")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("NETWORK_INTERFACE", res.stderr)
+
     def test_size_largest_in_samovar_storage_rejected(self) -> None:
         doc = yaml.safe_load(self.samovar_yaml)
         doc["autoinstall"]["storage"]["layout"] = {"name": "direct", "match": {"size": "largest"}}

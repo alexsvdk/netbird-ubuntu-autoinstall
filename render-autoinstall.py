@@ -52,6 +52,10 @@ elif _mode_env in ("generic", ""):
 else:
     fail(f"Unknown SAMOVAR_MODE={_mode_env!r}. Use 'samovar' or 'generic'.")
 
+NETWORK_INTERFACE = os.environ.get("NETWORK_INTERFACE", "both").strip().lower() or "both"
+if SAMOVAR_MODE and NETWORK_INTERFACE not in {"both", "lan0", "wifi0"}:
+    fail("NETWORK_INTERFACE must be both, lan0, or wifi0.")
+
 # ---------------------------------------------------------------------------
 # Common required inputs (both modes)
 # ---------------------------------------------------------------------------
@@ -404,10 +408,11 @@ samovar_early_commands: list[list[str]] = [
 # ---------------------------------------------------------------------------
 
 def build_samovar_network() -> dict[str, object]:
-    """Generate Netplan config for samovar: wifi0 (Intel AC 8260) + lan0 (Realtek)."""
-    network: dict[str, object] = {
-        "version": 2,
-        "ethernets": {
+    """Generate Netplan for the selected Samovar network interface(s)."""
+    network: dict[str, object] = {"version": 2}
+
+    if NETWORK_INTERFACE in {"both", "lan0"}:
+        network["ethernets"] = {
             "lan0": {
                 "match": {"macaddress": "44:8a:5b:64:11:2b"},
                 "set-name": "lan0",
@@ -415,8 +420,10 @@ def build_samovar_network() -> dict[str, object]:
                 "dhcp4-overrides": {"route-metric": 10},
                 "optional": True,
             }
-        },
-    }
+        }
+
+    if NETWORK_INTERFACE not in {"both", "wifi0"}:
+        return network
 
     # Add Wi-Fi access-points from samovar-config.json if available
     wifi_networks: list[dict] = []
@@ -458,6 +465,16 @@ def build_samovar_network() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Samovar provisioning bootstrap (samovar-provision.sh)
 # ---------------------------------------------------------------------------
+
+_samovar_firewall_interfaces = [
+    interface
+    for interface in ("wifi0", "lan0")
+    if NETWORK_INTERFACE in {"both", interface}
+]
+_samovar_firewall_rules = "\n".join(
+    f"ufw allow in on {interface} to any port 22"
+    for interface in _samovar_firewall_interfaces
+)
 
 _samovar_provision_script = f"""\
 #!/usr/bin/env bash
@@ -537,8 +554,7 @@ systemctl enable --now docker.service
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow in on wt0 to any port 22
-ufw allow in on wifi0 to any port 22
-ufw allow in on lan0 to any port 22
+{_samovar_firewall_rules}
 ufw allow in on wt0
 ufw allow out on wt0
 ufw --force enable
@@ -828,12 +844,13 @@ def build_write_files_samovar() -> list[dict[str, str]]:
     })
 
     # ── Wi-Fi systemd.link (rename by MAC without Netplan match) ─────────────
-    files.append({
-        "path": "/etc/systemd/network/10-wifi0.link",
-        "owner": "root:root",
-        "permissions": "0644",
-        "content": "[Match]\nMACAddress=34:13:e8:3c:b5:9a\n\n[Link]\nName=wifi0\n",
-    })
+    if NETWORK_INTERFACE in {"both", "wifi0"}:
+        files.append({
+            "path": "/etc/systemd/network/10-wifi0.link",
+            "owner": "root:root",
+            "permissions": "0644",
+            "content": "[Match]\nMACAddress=34:13:e8:3c:b5:9a\n\n[Link]\nName=wifi0\n",
+        })
 
     return files
 

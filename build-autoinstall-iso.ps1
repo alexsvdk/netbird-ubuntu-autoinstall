@@ -445,6 +445,7 @@ $AptRegion = if ($env:APT_REGION) { $env:APT_REGION } else { "auto" }
 $AptMirror = if ($env:APT_MIRROR) { $env:APT_MIRROR } else { "" }
 $AptSecurityMirror = if ($env:APT_SECURITY_MIRROR) { $env:APT_SECURITY_MIRROR } else { "" }
 $AptFallback = if ($env:APT_FALLBACK) { $env:APT_FALLBACK } else { "offline-install" }
+$NetworkInterface = if ($env:NETWORK_INTERFACE) { $env:NETWORK_INTERFACE } else { "both" }
 $SamovarConfigFile = if ($env:SAMOVAR_CONFIG_FILE) { $env:SAMOVAR_CONFIG_FILE } else { "samovar-config.json" }
 $AllowedSigners = if ($env:ALLOWED_SIGNERS) { $env:ALLOWED_SIGNERS } else { "" }
 $SshPublicKeys = if ($env:SSH_PUBLIC_KEYS) { $env:SSH_PUBLIC_KEYS } else { $SshPublicKey }
@@ -497,6 +498,7 @@ trap - EXIT
       -e "APT_MIRROR=$AptMirror" `
       -e "APT_SECURITY_MIRROR=$AptSecurityMirror" `
       -e "APT_FALLBACK=$AptFallback" `
+      -e "NETWORK_INTERFACE=$NetworkInterface" `
       -e "SAMOVAR_MODE=$SamovarMode" `
       -e "SAMOVAR_CONFIG_FILE=$SamovarConfigFile" `
       -e "ALLOWED_SIGNERS=$AllowedSigners" `
