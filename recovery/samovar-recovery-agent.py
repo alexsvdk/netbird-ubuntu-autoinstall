@@ -1011,9 +1011,10 @@ def _netbird_rollback(old_profile: str | None) -> None:
         return
     log.info("Rolling back to NetBird profile: %s", old_profile)
     try:
+        # Selecting the previous profile is enough. Calling `netbird up` without
+        # a setup key starts interactive SSO and can block recovery indefinitely.
         _run(["netbird", "profile", "select", old_profile], check=False, timeout=15)
-        _run(["netbird", "up"], check=False, timeout=60)
-        log.info("NetBird rolled back to profile: %s", old_profile)
+        log.info("Rolled back to NetBird profile: %s", old_profile)
     except RecoveryError as exc:
         raise RollbackError(f"NetBird rollback failed: {exc}") from exc
 

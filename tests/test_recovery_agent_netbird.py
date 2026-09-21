@@ -52,3 +52,16 @@ def test_retry_uses_unique_netbird_profile_names() -> None:
     assert len(added) == 2
     assert added[0] != added[1]
     assert all(name.startswith("samovar-gen2026091901-") for name in added)
+
+
+def test_rollback_does_not_start_interactive_sso() -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        agent._netbird_rollback("old-profile")
+
+    assert commands == [["netbird", "profile", "select", "old-profile"]]
