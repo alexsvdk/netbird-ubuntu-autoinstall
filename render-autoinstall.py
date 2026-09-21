@@ -291,9 +291,20 @@ WantedBy=multi-user.target
 # Samovar disk serials
 # ---------------------------------------------------------------------------
 
-SYSTEM_SSD_SERIAL = "50026B7683695BFE"   # Kingston 240GB - root
-DATA_SSD_SERIAL   = "TD2023102401304"     # SBSSD 240GB   - /data
-HDD_SERIAL        = "WCC3F1336131"        # WD 1TB        - /archive
+# Some virtual controllers expose a disk serial with a model prefix, for
+# example QEMU_HARDDISK_50026B7683695BFE.  Keep the physical target default
+# unchanged and allow VM builds to opt into that prefix explicitly.
+DISK_SERIAL_PREFIX = os.environ.get("DISK_SERIAL_PREFIX", "")
+if not re.fullmatch(r"[A-Za-z0-9_.-]*", DISK_SERIAL_PREFIX):
+    fail("DISK_SERIAL_PREFIX may contain only letters, digits, '_', '-', and '.'.")
+
+SWAP_SIZE_GIB = os.environ.get("SWAP_SIZE_GIB", "1").strip()
+if not re.fullmatch(r"[1-9][0-9]*", SWAP_SIZE_GIB):
+    fail("SWAP_SIZE_GIB must be a positive integer number of GiB.")
+
+SYSTEM_SSD_SERIAL = f"{DISK_SERIAL_PREFIX}50026B7683695BFE"  # Kingston 240GB - root
+DATA_SSD_SERIAL   = f"{DISK_SERIAL_PREFIX}TD2023102401304"    # SBSSD 240GB   - /data
+HDD_SERIAL        = f"{DISK_SERIAL_PREFIX}WCC3F1336131"       # WD 1TB        - /archive
 
 # ---------------------------------------------------------------------------
 # Samovar storage config
@@ -507,6 +518,32 @@ EOF
 
 # ── fstrim timer ─────────────────────────────────────────────────────────────
 systemctl enable fstrim.timer || true
+
+# ── Swap files ({SWAP_SIZE_GIB} GiB on each SSD) ───────────────────────────────────────────
+create_swap_file() {{
+  local swapfile="$1"
+  local size_gib="$2"
+
+  if swapon --show=NAME --noheadings | grep -Fxq "${{swapfile}}"; then
+    echo "$(date -Is) samovar-provision: swap ${{swapfile}} already active"
+  elif [ -f "${{swapfile}}" ]; then
+    chmod 600 "${{swapfile}}"
+    mkswap "${{swapfile}}"
+    swapon "${{swapfile}}"
+  else
+    fallocate -l "${{size_gib}}G" "${{swapfile}}" \
+      || dd if=/dev/zero of="${{swapfile}}" bs=1G count="${{size_gib}}" status=progress
+    chmod 600 "${{swapfile}}"
+    mkswap "${{swapfile}}"
+    swapon "${{swapfile}}"
+  fi
+
+  if ! grep -Fqx "${{swapfile}} none swap sw 0 0" /etc/fstab; then
+    echo "${{swapfile}} none swap sw 0 0" >> /etc/fstab
+  fi
+}}
+create_swap_file /swapfile {SWAP_SIZE_GIB}
+create_swap_file /data/swapfile {SWAP_SIZE_GIB}
 
 # ── journald limits ──────────────────────────────────────────────────────────
 install -d -m 0755 /etc/systemd/journald.conf.d

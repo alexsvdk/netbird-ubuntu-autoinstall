@@ -141,34 +141,43 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${PACKAGES[@]}"
 log "Base packages installed."
 
 # ---------------------------------------------------------------------------
-# 5. Swap file (16 GiB at /swapfile)
+# 5. Swap files (1 GiB on each SSD by default)
 # ---------------------------------------------------------------------------
 
-SWAPFILE="/swapfile"
-SWAP_SIZE_GIB=16
-
-if swapon --show | grep -q "${SWAPFILE}"; then
-    log "Swap file ${SWAPFILE} already active — skipping."
-elif [[ -f "${SWAPFILE}" ]]; then
-    log "Swap file ${SWAPFILE} exists but not active — enabling."
-    chmod 600 "${SWAPFILE}"
-    mkswap "${SWAPFILE}"
-    swapon "${SWAPFILE}"
-else
-    log "Creating ${SWAP_SIZE_GIB} GiB swap file at ${SWAPFILE}..."
-    fallocate -l "${SWAP_SIZE_GIB}G" "${SWAPFILE}" \
-        || dd if=/dev/zero of="${SWAPFILE}" bs=1G count="${SWAP_SIZE_GIB}" status=progress
-    chmod 600 "${SWAPFILE}"
-    mkswap "${SWAPFILE}"
-    swapon "${SWAPFILE}"
-    log "Swap file created and activated."
+SWAP_SIZE_GIB="${SWAP_SIZE_GIB:-1}"
+if ! [[ "${SWAP_SIZE_GIB}" =~ ^[1-9][0-9]*$ ]]; then
+    die "SWAP_SIZE_GIB must be a positive integer number of GiB."
 fi
 
-# Ensure /swapfile is in /etc/fstab
-if ! grep -q "^${SWAPFILE}" /etc/fstab; then
-    echo "${SWAPFILE} none swap sw 0 0" >> /etc/fstab
-    log "Added ${SWAPFILE} to /etc/fstab."
-fi
+create_swap_file() {
+    local swapfile="$1"
+    local size_gib="$2"
+
+    if swapon --show=NAME --noheadings | grep -Fxq "${swapfile}"; then
+        log "Swap file ${swapfile} already active — skipping."
+    elif [[ -f "${swapfile}" ]]; then
+        log "Swap file ${swapfile} exists but not active — enabling."
+        chmod 600 "${swapfile}"
+        mkswap "${swapfile}"
+        swapon "${swapfile}"
+    else
+        log "Creating ${size_gib} GiB swap file at ${swapfile}..."
+        fallocate -l "${size_gib}G" "${swapfile}" \
+            || dd if=/dev/zero of="${swapfile}" bs=1G count="${size_gib}" status=progress
+        chmod 600 "${swapfile}"
+        mkswap "${swapfile}"
+        swapon "${swapfile}"
+        log "Swap file ${swapfile} created and activated."
+    fi
+
+    if ! grep -Fqx "${swapfile} none swap sw 0 0" /etc/fstab; then
+        echo "${swapfile} none swap sw 0 0" >> /etc/fstab
+        log "Added ${swapfile} to /etc/fstab."
+    fi
+}
+
+create_swap_file /swapfile "${SWAP_SIZE_GIB}"
+create_swap_file /data/swapfile "${SWAP_SIZE_GIB}"
 
 # ---------------------------------------------------------------------------
 # 6. Directory layout
@@ -603,7 +612,7 @@ check_cmd "ufw active"             bash -c "ufw status | grep -q 'Status: active
 check_cmd "fstrim.timer enabled"   systemctl is-enabled fstrim.timer
 check_cmd "NTP active"             timedatectl show --property=NTPSynchronized
 check_cmd "/data mounted"          mountpoint -q /data
-check_cmd "swap active"            swapon --show | grep -q /swapfile
+check_cmd "swap active"            bash -c "swapon --show=NAME --noheadings | grep -Fxq /swapfile && swapon --show=NAME --noheadings | grep -Fxq /data/swapfile"
 check_cmd "docker enabled"         systemctl is-enabled docker
 check_cmd "alex in docker group"   id alex | grep -q docker
 

@@ -149,10 +149,12 @@ def _yaml_text_from_structure(storage: dict) -> str:
     return yaml.dump(storage, default_flow_style=False)
 
 
-def _get_rendered_yaml() -> str | None:
+def _get_rendered_yaml(disk_serial_prefix: str = "", swap_size_gib: str = "1") -> str | None:
     """Run render-autoinstall.py with mock env vars in samovar mode; return stdout or None."""
     env = os.environ.copy()
     env.update({
+        "DISK_SERIAL_PREFIX": disk_serial_prefix,
+        "SWAP_SIZE_GIB": swap_size_gib,
         "SAMOVAR_MODE": "samovar",
         "HOSTNAME": "samovar",
         "USERNAME": "alex",
@@ -380,6 +382,20 @@ class TestRenderedStorageYaml(unittest.TestCase):
     def test_rendered_yaml_contains_autoinstall(self) -> None:
         self._skip_if_no_rendered()
         self.assertIn("autoinstall:", self.rendered)
+
+    def test_rendered_yaml_supports_vm_disk_serial_prefix(self) -> None:
+        rendered = _get_rendered_yaml("QEMU_HARDDISK_")
+        self.assertIsNotNone(rendered)
+        assert rendered is not None
+        self.assertIn("serial: QEMU_HARDDISK_50026B7683695BFE", rendered)
+        self.assertIn("for serial in QEMU_HARDDISK_50026B7683695BFE", rendered)
+
+    def test_rendered_yaml_uses_configured_swap_size(self) -> None:
+        rendered = _get_rendered_yaml(swap_size_gib="8")
+        self.assertIsNotNone(rendered)
+        assert rendered is not None
+        self.assertIn("create_swap_file /swapfile 8", rendered)
+        self.assertIn("create_swap_file /data/swapfile 8", rendered)
 
     def test_rendered_yaml_has_poweroff(self) -> None:
         self._skip_if_no_rendered()
