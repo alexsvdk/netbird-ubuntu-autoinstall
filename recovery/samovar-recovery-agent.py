@@ -856,16 +856,22 @@ def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
 
 
 def _netbird_current_profile() -> str | None:
-    """Return the name of the currently active NetBird profile, or None."""
+    """Return the ID of the currently active NetBird profile, or None."""
     try:
-        result = _run(["netbird", "profile", "list"], check=False, timeout=15)
+        result = _run(
+            ["netbird", "profile", "list", "--show-id"],
+            check=False,
+            timeout=15,
+        )
         stdout = (result.stdout or b"").decode()
+        active_markers = {"✓", "*", "active", "yes", "true"}
         for line in stdout.splitlines():
-            if "active" in line.lower() or "*" in line:
-                # Extract profile name — format varies; take first token
-                parts = line.split()
-                if parts:
-                    return parts[0].lstrip("*").strip()
+            parts = line.split()
+            if not parts or parts[0].upper() in {"ID", "NAME"}:
+                continue
+            if parts[-1].lower() in active_markers:
+                # With --show-id the first column is a stable profile ID.
+                return parts[0].lstrip("*").strip()
     except RecoveryError:
         pass
     return None

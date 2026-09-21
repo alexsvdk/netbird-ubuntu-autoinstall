@@ -65,3 +65,13 @@ def test_rollback_does_not_start_interactive_sso() -> None:
         agent._netbird_rollback("old-profile")
 
     assert commands == [["netbird", "profile", "select", "old-profile"]]
+
+
+def test_current_profile_returns_active_profile_id_not_table_header() -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert cmd == ["netbird", "profile", "list", "--show-id"]
+        output = "ID        NAME       ACTIVE\na1b2c3d4  old-name   ✓\ndefault    default\n".encode()
+        return subprocess.CompletedProcess(cmd, 0, output, b"")
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        assert agent._netbird_current_profile() == "a1b2c3d4"
