@@ -474,11 +474,21 @@ DISK_SERIAL_PREFIX="${DISK_SERIAL_PREFIX:-}"
 SWAP_SIZE_GIB="${SWAP_SIZE_GIB:-1}"
 NOTIFY_TOPIC="${NOTIFY_TOPIC:-samovar_test}"
 MIHOMO_IMAGE="${MIHOMO_IMAGE:-metacubex/mihomo:latest}"
+OFFLINE_BUNDLE_REFRESH="${OFFLINE_BUNDLE_REFRESH:-auto}"
+OFFLINE_BUNDLE_CACHE="${OFFLINE_BUNDLE_CACHE:-offline/packages/${UBUNTU_VERSION}-${ARCH}}"
 if [[ ! "$MIHOMO_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/@:-]*$ ]]; then
   echo "Error: MIHOMO_IMAGE must be a valid Docker image reference without whitespace." >&2
   exit 1
 fi
-export APT_REGION APT_MIRROR APT_SECURITY_MIRROR APT_FALLBACK NETWORK_INTERFACE DISK_SERIAL_PREFIX SWAP_SIZE_GIB NOTIFY_TOPIC MIHOMO_IMAGE
+if [[ "$OFFLINE_BUNDLE_REFRESH" != "auto" && "$OFFLINE_BUNDLE_REFRESH" != "never" ]]; then
+  echo "Error: OFFLINE_BUNDLE_REFRESH must be auto or never." >&2
+  exit 1
+fi
+if [[ "$OFFLINE_BUNDLE_CACHE" == /* || "$OFFLINE_BUNDLE_CACHE" == *"../"* || "$OFFLINE_BUNDLE_CACHE" == ".." ]]; then
+  echo "Error: OFFLINE_BUNDLE_CACHE must be a relative path inside the project." >&2
+  exit 1
+fi
+export APT_REGION APT_MIRROR APT_SECURITY_MIRROR APT_FALLBACK NETWORK_INTERFACE DISK_SERIAL_PREFIX SWAP_SIZE_GIB NOTIFY_TOPIC MIHOMO_IMAGE OFFLINE_BUNDLE_REFRESH OFFLINE_BUNDLE_CACHE
 
 echo
 echo "APT mirrors: region=${APT_REGION}"
@@ -490,6 +500,25 @@ if [[ -n "$APT_SECURITY_MIRROR" ]]; then
 fi
 echo "             fallback=${APT_FALLBACK}"
 echo
+echo "Offline bundle: refresh=${OFFLINE_BUNDLE_REFRESH}"
+echo "                cache=${OFFLINE_BUNDLE_CACHE}"
+echo "Preparing cached offline APT bundle..."
+
+docker run --rm \
+  --platform "linux/${ARCH}" \
+  -e OFFLINE_BUNDLE_CACHE="$OFFLINE_BUNDLE_CACHE" \
+  -e OFFLINE_BUNDLE_REFRESH="$OFFLINE_BUNDLE_REFRESH" \
+  -v "$DOCKER_WORK_DIR:/work" \
+  -w /work \
+  "ubuntu:${UBUNTU_SERIES}" bash -euc '
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev python3 >/dev/null
+    bash /work/offline/build-apt-bundle.sh \
+      /work/offline/packages.lock.json \
+      "/work/$OFFLINE_BUNDLE_CACHE" \
+      "$OFFLINE_BUNDLE_REFRESH"
+  '
+
 echo "Generating password hash and autoinstall.yaml..."
 
 docker run --rm \
@@ -540,6 +569,7 @@ docker run --rm \
   -e NETWORK_INTERFACE="$NETWORK_INTERFACE" \
   -e NOTIFY_TOPIC="$NOTIFY_TOPIC" \
   -e MIHOMO_IMAGE="$MIHOMO_IMAGE" \
+  -e OFFLINE_BUNDLE_CACHE="$OFFLINE_BUNDLE_CACHE" \
   -v "$DOCKER_WORK_DIR:/work" \
   "${DOCKER_OUTPUT_MOUNT[@]}" \
   ubuntu:24.04 bash -euc '
@@ -574,6 +604,7 @@ docker run --rm \
       -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
       -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
       -map /work/autoinstall.yaml /autoinstall.yaml \
+      -map "/work/$OFFLINE_BUNDLE_CACHE" /samovar-offline-apt \
       -boot_image any replay
 
     xorriso \
@@ -585,6 +616,7 @@ docker run --rm \
       -osirrox on \
       -indev "$OUTPUT_ISO_PATH" \
       -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
+      -extract /samovar-offline-apt/Packages.gz /tmp/iso-build/offline-Packages.gz \
       -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
       -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
       >/dev/null 2>&1

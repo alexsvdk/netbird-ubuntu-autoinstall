@@ -64,6 +64,8 @@ Supported variables (see `.env.example`):
 | `APT_MIRROR` | Optional preferred primary mirror URI (prepended to candidates) |
 | `APT_SECURITY_MIRROR` | Optional security-pocket mirror URI |
 | `APT_FALLBACK` | If no mirror works: `offline-install` (default), `abort`, or `continue-anyway` |
+| `OFFLINE_BUNDLE_REFRESH` | Local APT bundle refresh mode: `auto` (default) updates metadata and downloads only missing/newer `.deb` files; `never` requires a complete existing cache |
+| `OFFLINE_BUNDLE_CACHE` | Project-relative persistent cache path (default `offline/packages/${UBUNTU_VERSION}-${ARCH}`) |
 | `NOTIFY_TOPIC` | ntfy.sh topic for installation status notifications (default `samovar_test`) |
 
 Non-empty values from `.env` (or the shell, except bare `HOSTNAME`) skip the matching interactive prompt. Empty values still prompt at build time.
@@ -95,6 +97,19 @@ APT_REGION=auto
 Official country mirrors use `http://XX.archive.ubuntu.com/ubuntu` (Launchpad mirror list: https://launchpad.net/ubuntu/+archivemirrors).
 
 `.env` is gitignored — do not commit secrets.
+
+### Offline APT bundle
+
+Each build embeds a local flat APT repository at `/samovar-offline-apt` in the
+generated ISO. During installation it is copied to
+`/var/lib/samovar-offline-apt` on the target; first-boot provisioning installs
+its Ubuntu packages from that repository before attempting a network mirror.
+
+The persistent cache is ignored by Git. With the default
+`OFFLINE_BUNDLE_REFRESH=auto`, the builder checks APT metadata but reuses cached
+`.deb` files and only downloads packages that are missing or have a newer
+candidate. Use `OFFLINE_BUNDLE_REFRESH=never` to build without contacting APT;
+it fails if the cache is missing or its root package lock has changed.
 
 ## Build
 

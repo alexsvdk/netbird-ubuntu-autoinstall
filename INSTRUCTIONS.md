@@ -91,6 +91,11 @@ APT_MIRROR=http://mirror.yandex.ru/ubuntu
 
 # Тема ntfy.sh для уведомлений о ходе установки
 NOTIFY_TOPIC=samovar_test
+
+# Offline APT bundle: `auto` использует persistent cache и скачивает только
+# отсутствующие или более новые .deb; `never` собирает строго из готового cache.
+OFFLINE_BUNDLE_REFRESH=auto
+# OFFLINE_BUNDLE_CACHE=offline/packages/24.04.4-amd64
 ```
 
 Установите приложение **ntfy** на телефон и подпишитесь на ту же тему. Для реальной установки лучше задать длинную уникальную тему.
@@ -118,6 +123,12 @@ chmod +x build-autoinstall-iso.sh
 4. На выходе формируются два файла:
    - `ubuntu-24.04.4-autoinstall-amd64.iso`
    - `ubuntu-24.04.4-autoinstall-amd64.iso.sha256`
+
+При первой сборке создаётся Git-ignored cache `offline/packages/<release>-<arch>`.
+Он становится локальным APT repository внутри ISO. При следующих сборках cache
+переиспользуется: с `OFFLINE_BUNDLE_REFRESH=auto` заново скачиваются только
+отсутствующие или более новые Ubuntu-пакеты. Для гарантированно офлайн-сборки
+после первоначального наполнения задайте `OFFLINE_BUNDLE_REFRESH=never`.
 
 ---
 

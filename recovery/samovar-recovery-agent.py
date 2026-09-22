@@ -734,6 +734,9 @@ network:
 
   wifis:
     wifi0:
+      match:
+        macaddress: "34:13:e8:3c:b5:9a"
+      set-name: wifi0
       dhcp4: true
       optional: true
       dhcp4-overrides:

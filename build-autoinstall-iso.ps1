@@ -450,8 +450,18 @@ $DiskSerialPrefix = if ($null -ne $env:DISK_SERIAL_PREFIX) { $env:DISK_SERIAL_PR
 $SwapSizeGib = if ($env:SWAP_SIZE_GIB) { $env:SWAP_SIZE_GIB } else { "1" }
 $NotifyTopic = if ($env:NOTIFY_TOPIC) { $env:NOTIFY_TOPIC } else { "samovar_test" }
 $MihomoImage = if ($env:MIHOMO_IMAGE) { $env:MIHOMO_IMAGE } else { "metacubex/mihomo:latest" }
+$OfflineBundleRefresh = if ($env:OFFLINE_BUNDLE_REFRESH) { $env:OFFLINE_BUNDLE_REFRESH } else { "auto" }
+$OfflineBundleCache = if ($env:OFFLINE_BUNDLE_CACHE) { $env:OFFLINE_BUNDLE_CACHE } else { "offline/packages/$UbuntuVersion-$Arch" }
 if ($MihomoImage -notmatch '^[A-Za-z0-9][A-Za-z0-9._/@:-]*$') {
     Write-Error "Error: MIHOMO_IMAGE must be a valid Docker image reference without whitespace."
+    exit 1
+}
+if ($OfflineBundleRefresh -notin @("auto", "never")) {
+    Write-Error "Error: OFFLINE_BUNDLE_REFRESH must be auto or never."
+    exit 1
+}
+if ([System.IO.Path]::IsPathRooted($OfflineBundleCache) -or $OfflineBundleCache -match '(^|[\\/])\.\.([\\/]|$)') {
+    Write-Error "Error: OFFLINE_BUNDLE_CACHE must be a relative path inside the project."
     exit 1
 }
 $env:MIHOMO_IMAGE = $MihomoImage
@@ -474,6 +484,29 @@ $step1Path = Join-Path $WorkDir ".autoinstall-step1.tmp.sh"
 $step2Path = Join-Path $WorkDir ".autoinstall-step2.tmp.sh"
 
 try {
+        Write-Host "Offline bundle: refresh=$OfflineBundleRefresh"
+        Write-Host "                cache=$OfflineBundleCache"
+        Write-Host "Preparing cached offline APT bundle..."
+        $bundleScript = @'
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev python3 >/dev/null
+bash /work/offline/build-apt-bundle.sh \
+    /work/offline/packages.lock.json \
+    "/work/$OFFLINE_BUNDLE_CACHE" \
+    "$OFFLINE_BUNDLE_REFRESH"
+'@
+        & docker run --rm `
+            --platform "linux/$Arch" `
+            -e "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache" `
+            -e "OFFLINE_BUNDLE_REFRESH=$OfflineBundleRefresh" `
+            -v "${DockerWorkDir}:/work" `
+            -w /work `
+            "ubuntu:$UbuntuSeries" bash -euc $bundleScript
+        if ($LASTEXITCODE -ne 0) {
+                Write-Error "Failed to prepare offline APT bundle."
+                exit 1
+        }
+
     Write-Host "Generating password hash and autoinstall.yaml..."
 
     $step1Script = @'
@@ -568,6 +601,7 @@ xorriso \
   -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
   -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
   -map /work/autoinstall.yaml /autoinstall.yaml \
+    -map "/work/$OFFLINE_BUNDLE_CACHE" /samovar-offline-apt \
   -boot_image any replay
 
 xorriso \
@@ -579,6 +613,7 @@ xorriso \
   -osirrox on \
   -indev "$OUTPUT_ISO_PATH" \
   -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
+    -extract /samovar-offline-apt/Packages.gz /tmp/iso-build/offline-Packages.gz \
   -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
   -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
   >/dev/null 2>&1
@@ -598,6 +633,7 @@ python3 /work/validate-autoinstall-iso.py \
       "-e", "NETWORK_INTERFACE=$NetworkInterface",
       "-e", "NOTIFY_TOPIC=$NotifyTopic",
       "-e", "MIHOMO_IMAGE=$MihomoImage",
+    "-e", "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache",
       "-v", "${DockerWorkDir}:/work",
       "-w", "/work"
     )

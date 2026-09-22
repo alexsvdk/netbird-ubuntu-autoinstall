@@ -278,7 +278,11 @@ class PublicKitTests(unittest.TestCase):
             self.assertEqual(render.returncode, 0, render.stderr or render.stdout)
             self.assertIn("autoinstall:", render.stdout)
             self.assertIn("shutdown: poweroff", render.stdout)
-            self.assertIn("netbird up --setup-key", render.stdout)
+            rendered = yaml.safe_load(render.stdout)["autoinstall"]
+            files = {entry["path"]: entry["content"] for entry in rendered["user-data"]["write_files"]}
+            self.assertIn("netbird up --setup-key", files["/usr/local/sbin/netbird-enroll.sh"])
+            self.assertIn("/cdrom/samovar-offline-apt/", rendered["late-commands"][0])
+            self.assertIn("offline_apt_install()", files["/usr/local/sbin/netbird-enroll.sh"])
             yaml_path.write_text(render.stdout, encoding="utf-8")
 
             patch = subprocess.run(
@@ -301,6 +305,21 @@ class PublicKitTests(unittest.TestCase):
     def test_mihomo_image_is_forwarded_by_build_entry_points(self) -> None:
         for rel in ("build-autoinstall-iso.sh", "build-autoinstall-iso.ps1", "build-autoinstall-iso.bat"):
             self.assertIn("MIHOMO_IMAGE", (ROOT / rel).read_text(encoding="utf-8"))
+
+    def test_offline_bundle_is_present_and_forwarded_by_build_entry_points(self) -> None:
+        helper = ROOT / "offline" / "build-apt-bundle.sh"
+        self.assertTrue(helper.is_file())
+        syntax = subprocess.run(["bash", "-n", str(helper)], capture_output=True, text=True)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        lock = (ROOT / "offline" / "packages.lock.json").read_text(encoding="utf-8")
+        self.assertIn("linux-firmware", lock)
+        self.assertIn("wireless-regdb", lock)
+        for rel in ("build-autoinstall-iso.sh", "build-autoinstall-iso.ps1", "build-autoinstall-iso.bat"):
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn("OFFLINE_BUNDLE", text, rel)
+        shell = (ROOT / "build-autoinstall-iso.sh").read_text(encoding="utf-8")
+        self.assertIn("-e OFFLINE_BUNDLE_CACHE=\"$OFFLINE_BUNDLE_CACHE\"", shell)
+        self.assertIn("-e OFFLINE_BUNDLE_REFRESH=\"$OFFLINE_BUNDLE_REFRESH\"", shell)
 
     def test_build_script_bash_syntax(self) -> None:
         result = subprocess.run(

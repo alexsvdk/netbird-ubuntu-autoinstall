@@ -17,6 +17,7 @@ samovar-config.json.sig
 offline/*.deb
 offline/*.tar.gz
 offline/packages/
+offline/cache/
 offline/images/
 
 # Ubuntu / autoinstall ISO images (multi-GB binaries)

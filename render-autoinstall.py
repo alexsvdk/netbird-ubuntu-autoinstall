@@ -241,6 +241,35 @@ exit 0
 """
 
 
+_offline_apt_install = """\
+offline_apt_install() {
+    local repository=/var/lib/samovar-offline-apt
+    local source=/etc/apt/sources.list.d/samovar-offline.list
+    local apt_options=(
+        -o "Dir::Etc::sourcelist=$source"
+        -o "Dir::Etc::sourceparts=-"
+        -o "APT::Get::List-Cleanup=0"
+    )
+
+    [ -s "$repository/Packages.gz" ] || return 1
+    printf 'deb [trusted=yes] file:%s ./\\n' "$repository" >"$source"
+    apt-get "${apt_options[@]}" update
+    DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y "$@"
+}
+
+install_with_offline_fallback() {
+    if offline_apt_install "$@"; then
+        echo "$(date -Is) package installation: completed from offline bundle"
+        return 0
+    fi
+
+    echo "$(date -Is) package installation: offline bundle unavailable or incomplete; using network"
+    apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 update
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 install -y "$@"
+}
+"""
+
+
 # ---------------------------------------------------------------------------
 # Generic bootstrap script (kept for backward compatibility)
 # ---------------------------------------------------------------------------
@@ -269,11 +298,12 @@ echo "$(date -Is) netbird-enroll: network diagnostics"
 ip route || true
 getent ahosts {default_archive_host} || true
 
-# Make one bounded package-installation attempt.  A non-zero exit is retried by
-# systemd, rather than hiding a permanent DNS, mirror, or package error inside
-# an endless shell loop.
-apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 update
-DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 install -y \\
+{_offline_apt_install}
+
+# Make one bounded package-installation attempt. A complete local repository
+# avoids requiring network access on the first boot; a failed attempt is retried
+# by systemd rather than hidden in an endless shell loop.
+install_with_offline_fallback \\
     curl ca-certificates docker.io docker-compose-v2 ufw
 notify "Сеть доступна, базовые пакеты установлены"
 
@@ -644,8 +674,10 @@ journalctl --rotate || true
 journalctl --vacuum-size=90M || true
 
 # ── Package installation ──────────────────────────────────────────────────────
-apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 update
-DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o DPkg::Lock::Timeout=120 install -y \\
+{_offline_apt_install}
+
+install_with_offline_fallback \\
+    openssh-server wpasupplicant iw linux-firmware wireless-regdb \\
     curl ca-certificates docker.io docker-compose-v2 ufw \\
     smartmontools btop tmux git jq
 notify "Базовые пакеты установлены"
@@ -1122,6 +1154,10 @@ if not SAMOVAR_MODE:
             },
             "updates": "security",
             "early-commands": [["sh", "-c", _notify_live_command("Установщик запущен")]],
+            "late-commands": [
+                "mkdir -p /target/var/lib/samovar-offline-apt && "
+                "cp -a /cdrom/samovar-offline-apt/. /target/var/lib/samovar-offline-apt/",
+            ],
             # A reboot with the USB stick still first in the UEFI boot order starts
             # the live installer again.  Power off instead, so removing the stick
             # is an explicit and safe post-install step.
@@ -1153,6 +1189,10 @@ else:
             "shutdown": "poweroff",
             # Preflight: verify hardware serials before any disk writes
             "early-commands": samovar_early_commands,
+            "late-commands": [
+                "mkdir -p /target/var/lib/samovar-offline-apt && "
+                "cp -a /cdrom/samovar-offline-apt/. /target/var/lib/samovar-offline-apt/",
+            ],
             "user-data": {
                 "write_files": build_write_files_samovar(),
                 "runcmd": build_runcmd_samovar(),

@@ -39,6 +39,14 @@ def validate_yaml(path: Path) -> None:
         fail("autoinstall.version must be integer 1.")
     if autoinstall.get("shutdown") != "poweroff":
         fail("autoinstall.shutdown must be poweroff so the USB installer cannot restart.")
+    late_commands = autoinstall.get("late-commands")
+    if not isinstance(late_commands, list) or not any(
+        isinstance(command, str)
+        and "/cdrom/samovar-offline-apt/" in command
+        and "/target/var/lib/samovar-offline-apt/" in command
+        for command in late_commands
+    ):
+        fail("autoinstall.late-commands must copy the offline APT bundle into the target.")
 
     user_data = require_mapping(autoinstall.get("user-data"), "autoinstall.user-data")
     runcmd = user_data.get("runcmd")
