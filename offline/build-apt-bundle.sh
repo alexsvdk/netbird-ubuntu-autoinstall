@@ -18,12 +18,7 @@ case "$REFRESH_MODE" in
     ;;
 esac
 
-command -v apt-get >/dev/null
-command -v apt-ftparchive >/dev/null
-command -v dpkg-deb >/dev/null
-command -v gpg >/dev/null
 command -v python3 >/dev/null
-command -v curl >/dev/null
 
 DOWNLOADS="$CACHE_DIR/downloads"
 REPOSITORY="$CACHE_DIR/repository"
@@ -90,6 +85,17 @@ if [[ "$REFRESH_MODE" == "never" ]]; then
   echo "Using verified offline APT bundle: $REPOSITORY"
   exit 0
 fi
+
+command -v apt-get >/dev/null
+command -v apt-ftparchive >/dev/null
+command -v dpkg-deb >/dev/null
+command -v gpg >/dev/null
+
+if ! command -v curl >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl gnupg >/dev/null
+fi
+command -v curl >/dev/null
 
 mkdir -p "$DOWNLOADS/partial" "$CACHE_DIR"
 
@@ -288,29 +294,29 @@ lock = {
     "external_apt": seeds["external_apt"],
     "packages": json.loads(Path(packages_path).read_text(encoding="utf-8")),
 }
-  names = {package["name"] for package in lock["packages"]}
-  required_prefixes = (
+names = {package["name"] for package in lock["packages"]}
+required_prefixes = (
     "linux-image-",
     "linux-modules-",
     "linux-modules-extra-",
     "linux-modules-nvidia-595-open-",
-  )
-  for prefix in required_prefixes:
+)
+for prefix in required_prefixes:
     if not any(name.startswith(prefix) for name in names):
-      raise SystemExit(f"Error: resolved NVIDIA kernel closure lacks {prefix}*")
+        raise SystemExit(f"Error: resolved NVIDIA kernel closure lacks {prefix}*")
 
-  kernel_versions = {
+kernel_versions = {
     package["version"]
     for package in lock["packages"]
     if package["name"].startswith("linux-image-") and package["name"] != "linux-image-generic"
-  }
-  nvidia_module_versions = {
+}
+nvidia_module_versions = {
     package["version"]
     for package in lock["packages"]
     if package["name"].startswith("linux-modules-nvidia-595-open-")
     and package["name"] != "linux-modules-nvidia-595-open-generic"
-  }
-  if not kernel_versions.intersection(nvidia_module_versions):
+}
+if not kernel_versions.intersection(nvidia_module_versions):
     raise SystemExit("Error: NVIDIA kernel module version does not match a locked Linux image version.")
 Path(lock_path).write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 PY

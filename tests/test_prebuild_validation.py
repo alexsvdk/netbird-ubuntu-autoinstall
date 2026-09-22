@@ -21,127 +21,10 @@ import jsonschema
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "schemas" / "samovar-config.schema.json"
 
-# ---------------------------------------------------------------------------
-# Implementation under test (inline)
-# ---------------------------------------------------------------------------
+import sys
+sys.path.insert(0, str(ROOT))
+from validate_config import ValidationResult, validate_config_file, verify_signature
 
-
-@dataclass
-class ValidationResult:
-    ok: bool
-    errors: list[str] = field(default_factory=list)
-
-    def add_error(self, msg: str) -> None:
-        self.errors.append(msg)
-        self.ok = False
-
-    def __bool__(self) -> bool:
-        return self.ok
-
-
-def _load_schema() -> dict:
-    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-
-
-def _verify_signature_mock(
-    json_bytes: bytes,
-    sig_bytes: bytes,
-    allowed_signers_path: str,
-) -> bool:
-    """Stub signature verifier used in tests — delegates to subprocess mock."""
-    import subprocess
-    try:
-        r = subprocess.run(
-            ["ssh-keygen", "-Y", "verify", "-f", allowed_signers_path,
-             "-I", "samovar-owner", "-n", "samovar-recovery"],
-            input=json_bytes,
-            capture_output=True,
-        )
-        return r.returncode == 0
-    except FileNotFoundError:
-        return False
-
-
-def validate_config_file(
-    config_path: str,
-    sig_path: str,
-    allowed_signers: str,
-    *,
-    verify_sig_fn=_verify_signature_mock,
-    schema: Optional[dict] = None,
-) -> ValidationResult:
-    """Validate a samovar-config.json + .sig pair.
-
-    Checks:
-    1. Files exist.
-    2. JSON parseable.
-    3. SSH signature valid (delegated to verify_sig_fn).
-    4. JSON Schema valid.
-    5. Semantic checks (target, schema version, generation >= 1,
-       management_url https, mihomo.config.proxies not empty if mihomo present).
-
-    Does NOT print passwords, setup keys or proxy credentials.
-    """
-    result = ValidationResult(ok=True)
-    schema = schema or _load_schema()
-
-    # 1. File existence
-    cfg_path = Path(config_path)
-    if not cfg_path.is_file():
-        result.add_error(f"Config file not found: {config_path}")
-        return result
-
-    sig_file = Path(sig_path)
-    if not sig_file.is_file():
-        result.add_error(f"Signature file not found: {sig_path}")
-        return result
-
-    # 2. JSON parsing
-    try:
-        raw = cfg_path.read_bytes()
-        data = json.loads(raw.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        result.add_error(f"Invalid JSON: {exc}")
-        return result
-
-    # 3. Signature verification
-    sig_bytes = sig_file.read_bytes()
-    if not verify_sig_fn(raw, sig_bytes, allowed_signers):
-        result.add_error("SSH signature verification failed")
-        return result
-
-    # 4. JSON Schema validation
-    try:
-        validator_cls = jsonschema.validators.validator_for(schema)
-        validator = validator_cls(schema, format_checker=jsonschema.FormatChecker())
-        validator.validate(data)
-    except jsonschema.ValidationError as exc:
-        result.add_error(f"Schema validation failed: {exc.message}")
-        return result
-
-    # 5. Semantic checks
-    if data.get("target") != "samovar":
-        result.add_error(f"target must be 'samovar', got: {data.get('target')!r}")
-
-    if data.get("generation", 0) < 1:
-        result.add_error("generation must be >= 1")
-
-    netbird = data.get("netbird")
-    if netbird:
-        mgmt = netbird.get("management_url", "")
-        if not mgmt.startswith("https://"):
-            result.add_error("netbird.management_url must use HTTPS")
-
-    mihomo = data.get("mihomo")
-    if mihomo and mihomo.get("enabled"):
-        proxies = mihomo.get("config", {}).get("proxies", None)
-        if proxies is None or len(proxies) == 0:
-            result.add_error(
-                "mihomo.config.proxies must contain at least one inline proxy "
-                "(bootstrap requirement — subscription URL alone is insufficient)"
-            )
-
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -381,5 +264,46 @@ class TestValidateConfigFileSecretRedaction(unittest.TestCase):
         self.assertTrue(len(result.errors) > 0)
 
 
+class TestValidateConfigFileRealSignature(unittest.TestCase):
+    """End-to-end tests using real ssh-keygen and the committed samovar config & signature."""
+
+    REAL_SIGNER = (
+        'alex@samovar namespaces="samovar-recovery" '
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILS64jfH6rfVS9J88BHRKv231PMvsRDRRSDjLRAh3FSj"
+    )
+
+    def test_real_samovar_config_and_signature_pass(self) -> None:
+        cfg = str(ROOT / "samovar-config.json")
+        sig = str(ROOT / "samovar-config.json.sig")
+        result = validate_config_file(cfg, sig, self.REAL_SIGNER)
+        self.assertTrue(result.ok, f"Validation failed: {result.errors}")
+        self.assertEqual(result.errors, [])
+
+    def test_real_samovar_config_fails_with_unauthorized_signer(self) -> None:
+        cfg = str(ROOT / "samovar-config.json")
+        sig = str(ROOT / "samovar-config.json.sig")
+        unauthorized = (
+            'unauthorized@attacker namespaces="samovar-recovery" '
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFAKEKEYFAKEKEYFAKEKEYFAKEKEY"
+        )
+        result = validate_config_file(cfg, sig, unauthorized)
+        self.assertFalse(result.ok)
+        self.assertTrue(any("signature" in e.lower() for e in result.errors))
+
+    def test_real_samovar_config_fails_if_tampered(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "samovar-config.json"
+            sig = Path(td) / "samovar-config.json.sig"
+            data = json.loads((ROOT / "samovar-config.json").read_text(encoding="utf-8"))
+            data["generation"] += 1
+            cfg.write_text(json.dumps(data), encoding="utf-8")
+            sig.write_bytes((ROOT / "samovar-config.json.sig").read_bytes())
+
+            result = validate_config_file(str(cfg), str(sig), self.REAL_SIGNER)
+            self.assertFalse(result.ok)
+            self.assertTrue(any("signature" in e.lower() for e in result.errors))
+
+
 if __name__ == "__main__":
     unittest.main()
+

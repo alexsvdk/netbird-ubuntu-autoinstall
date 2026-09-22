@@ -297,6 +297,29 @@ if ([string]::IsNullOrWhiteSpace($SamovarMode) -and (Test-Path (Join-Path $WorkD
     $SamovarMode = "samovar"
 }
 $env:SAMOVAR_MODE = $SamovarMode
+$SamovarConfigFile = if ($env:SAMOVAR_CONFIG_FILE) { $env:SAMOVAR_CONFIG_FILE } else { "samovar-config.json" }
+$AllowedSigners = if ($env:ALLOWED_SIGNERS) { $env:ALLOWED_SIGNERS } else { "" }
+
+if ($SamovarMode -eq "samovar") {
+    if ($Arch -ne "amd64") {
+        Write-Error "Error: Samovar mode requires ARCH=amd64 (target hardware is Acer Aspire TC-605 x86_64)."
+        exit 1
+    }
+    $cfgPath = if ([System.IO.Path]::IsPathRooted($SamovarConfigFile)) { $SamovarConfigFile } else { Join-Path $WorkDir $SamovarConfigFile }
+    $sigPath = "$cfgPath.sig"
+    if (-not (Test-Path $cfgPath -PathType Leaf)) {
+        Write-Error "Error: Samovar mode requires a valid config file at $cfgPath."
+        exit 1
+    }
+    if (-not (Test-Path $sigPath -PathType Leaf)) {
+        Write-Error "Error: Samovar mode requires a detached signature file at $sigPath."
+        exit 1
+    }
+    if ([string]::IsNullOrWhiteSpace($AllowedSigners)) {
+        Write-Error "Error: Samovar mode requires ALLOWED_SIGNERS to verify configuration."
+        exit 1
+    }
+}
 
 $DefaultHostname = if ($SamovarMode -eq "samovar") { "samovar" } else { "friend-server" }
 $DefaultUsername = if ($SamovarMode -eq "samovar") { "alex" } else { "server" }
@@ -440,6 +463,47 @@ if (-not (Test-Path $sourceIsoPath)) {
     Write-Host "Using existing $IsoName"
 }
 
+Write-Host "Verifying source ISO integrity..."
+$expectedIsoSha256 = if ($env:UBUNTU_ISO_SHA256) { $env:UBUNTU_ISO_SHA256.Trim() } else { "" }
+if ([string]::IsNullOrWhiteSpace($expectedIsoSha256)) {
+    $shaSumsUrl = if ($Arch -eq "amd64") {
+        "https://releases.ubuntu.com/$UbuntuSeries/SHA256SUMS"
+    } else {
+        "https://cdimage.ubuntu.com/releases/$UbuntuSeries/release/SHA256SUMS"
+    }
+    Write-Host "Fetching official SHA256SUMS from $shaSumsUrl..."
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
+        $shaContent = (New-Object System.Net.WebClient).DownloadString($shaSumsUrl)
+        foreach ($line in ($shaContent -split "`r?`n")) {
+            $parts = $line.Trim() -split '\s+'
+            if ($parts.Length -ge 2) {
+                $candidateName = $parts[1].TrimStart('*')
+                if ($candidateName -eq $IsoName) {
+                    $expectedIsoSha256 = $parts[0]
+                    break
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Failed to fetch SHA256SUMS: $_"
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($expectedIsoSha256)) {
+    $actualIsoSha256 = (Get-FileHash -Path $sourceIsoPath -Algorithm SHA256).Hash.ToLower()
+    $expectedLower = $expectedIsoSha256.ToLower()
+    if ($actualIsoSha256 -ne $expectedLower) {
+        Write-Error "Error: source ISO SHA-256 verification failed for $IsoName! Expected: $expectedLower, Actual: $actualIsoSha256"
+        exit 1
+    }
+    Write-Host "Source ISO SHA-256 verified: $actualIsoSha256"
+} else {
+    Write-Warning "Could not determine expected SHA-256 for $IsoName; skipping source verification."
+}
+
+$UbuntuIsoSha256 = if ($env:UBUNTU_ISO_SHA256) { $env:UBUNTU_ISO_SHA256 } else { $expectedIsoSha256 }
+
 # APT settings
 $AptRegion = if ($env:APT_REGION) { $env:APT_REGION } else { "auto" }
 $AptMirror = if ($env:APT_MIRROR) { $env:APT_MIRROR } else { "" }
@@ -498,8 +562,15 @@ try {
         Write-Host "                cache=$OfflineBundleCache"
         Write-Host "Preparing cached offline APT bundle..."
         $bundleScript = @'
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils gnupg python3 >/dev/null
+if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
+else
+    if ! command -v python3 >/dev/null 2>&1; then
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null
+    fi
+fi
 bash /work/offline/build-apt-bundle.sh \
     /work/offline/packages.seeds.json \
     /work/offline/packages.lock.json \
@@ -569,7 +640,7 @@ bash /work/offline/build-apt-bundle.sh \
 set -euo pipefail
 
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema openssh-client >/dev/null
 
 export PASSWORD_HASH
 PASSWORD_HASH="$(openssl passwd -6 "$PASSWORD")"
@@ -605,6 +676,7 @@ trap - EXIT
       -e "ALLOWED_SIGNERS=$AllowedSigners" `
       -e "SSH_PUBLIC_KEYS=$SshPublicKeys" `
       -e "SUDO_NOPASSWD=$SudoNoPasswd" `
+      -e "UBUNTU_ISO_SHA256=$UbuntuIsoSha256" `
       -v "${DockerWorkDir}:/work" `
       -w /work `
       ubuntu:24.04 bash /work/.autoinstall-step1.tmp.sh
@@ -650,6 +722,14 @@ python3 /work/validate-autoinstall-iso.py \
   /tmp/iso-build/grub-patched.cfg \
   /tmp/iso-build/loopback-patched.cfg
 
+geoip_map_args=()
+if [ -f "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb" ]; then
+  geoip_map_args+=(-map "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb" /samovar-offline-artifacts/geoip.metadb)
+  if [ -f "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb.sha256" ]; then
+    geoip_map_args+=(-map "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb.sha256" /samovar-offline-artifacts/geoip.metadb.sha256)
+  fi
+fi
+
 xorriso \
   -indev "/work/$ISO_NAME" \
   -outdev "$OUTPUT_ISO_PATH" \
@@ -659,6 +739,7 @@ xorriso \
     -map "/work/$OFFLINE_BUNDLE_CACHE/repository" /samovar-offline-apt \
     -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar" /samovar-offline-artifacts/mihomo-image.tar \
     -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar.sha256" /samovar-offline-artifacts/mihomo-image.tar.sha256 \
+    "${geoip_map_args[@]}" \
   -boot_image any replay
 
 xorriso \

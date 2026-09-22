@@ -67,6 +67,10 @@ MIHOMO_IMAGE = os.environ.get("MIHOMO_IMAGE", "metacubex/mihomo:latest").strip()
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/@:-]*", MIHOMO_IMAGE):
     fail("MIHOMO_IMAGE must be a valid Docker image reference without whitespace.")
 
+UBUNTU_ISO_SHA256 = os.environ.get("UBUNTU_ISO_SHA256", "").strip().lower()
+if UBUNTU_ISO_SHA256 and not re.fullmatch(r"[0-9a-f]{64}", UBUNTU_ISO_SHA256):
+    fail("UBUNTU_ISO_SHA256 must be a 64-character hex SHA-256 string.")
+
 # ---------------------------------------------------------------------------
 # Common required inputs (both modes)
 # ---------------------------------------------------------------------------
@@ -120,17 +124,31 @@ else:
 
     sudo_nopasswd = os.environ.get("SUDO_NOPASSWD", "true").strip().lower() != "false"
 
-    # Load samovar-config.json if present
+    allowed_signers = os.environ.get("ALLOWED_SIGNERS", "").strip()
+
+    # Load and validate samovar-config.json if present
     _cfg_env = os.environ.get("SAMOVAR_CONFIG_FILE", "samovar-config.json")
     _cfg_path = Path(_cfg_env)
     if not _cfg_path.is_absolute() and not _cfg_path.exists():
         _cfg_path = Path(__file__).resolve().parent / _cfg_env
     samovar_config: dict = {}
     if _cfg_path.exists():
+        _sig_path = Path(str(_cfg_path) + ".sig")
+        if not _sig_path.exists():
+            fail(f"Detached signature file not found for {_cfg_path}: {_sig_path}")
+        if not allowed_signers:
+            fail("ALLOWED_SIGNERS is required when samovar-config.json is present.")
+        try:
+            from validate_config import validate_config_file
+        except ImportError:
+            import sys
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from validate_config import validate_config_file
+        val_res = validate_config_file(str(_cfg_path), str(_sig_path), allowed_signers)
+        if not val_res.ok:
+            fail("samovar-config.json validation failed:\n" + "\n".join(val_res.errors))
         with _cfg_path.open(encoding="utf-8") as _f:
             samovar_config = json.load(_f)
-
-    allowed_signers = os.environ.get("ALLOWED_SIGNERS", "")
 
     # Generic compat: NETBIRD_SETUP_KEY not needed in samovar mode (comes via
     # samovar-config.json / recovery-agent at first boot).
@@ -149,6 +167,8 @@ arch = os.environ.get("ARCH", "amd64").strip().lower() or "amd64"
 arch = {"x86_64": "amd64", "x64": "amd64", "aarch64": "arm64", "arm": "arm64"}.get(arch, arch)
 if arch not in {"amd64", "arm64"}:
     fail(f"unsupported ARCH {arch!r}. Use amd64 or arm64.")
+if SAMOVAR_MODE and arch != "amd64":
+    fail("Samovar mode requires ARCH=amd64 (target hardware is Acer Aspire TC-605 x86_64).")
 if apt_fallback not in {"abort", "offline-install", "continue-anyway"}:
     fail("APT_FALLBACK must be abort, offline-install, or continue-anyway.")
 if not re.fullmatch(r"auto|default|archive|none|custom|[a-z]{2}", apt_region):
@@ -570,11 +590,11 @@ def build_samovar_network() -> dict[str, object]:
     if not access_points:
         access_points = {"samovar-fallback": {"password": "samovar-fallback"}}
 
-    # In Netplan with networkd backend, wifis must NOT use match: or set-name:
-    # (only allowed by interface name). Interface renaming by MAC is handled
-    # at the systemd/udev level via /etc/systemd/network/10-wifi0.link.
+    # Wi-Fi interface matching by MAC address and renaming to wifi0
     network["wifis"] = {
         "wifi0": {
+            "match": {"macaddress": "34:13:e8:3c:b5:9a"},
+            "set-name": "wifi0",
             "dhcp4": True,
             "dhcp4-overrides": {"route-metric": 20},
             "optional": True,
@@ -639,6 +659,13 @@ create_swap_file() {{
   local swapfile="$1"
   local size_gib="$2"
 
+  if [ "${{swapfile#/data}}" != "${{swapfile}}" ] && ! mountpoint -q /data; then
+    echo "ERROR: /data is not mounted! Refusing to initialize swap on root filesystem." >&2
+    logger -t samovar-provision "ERROR: /data is not mounted!"
+    notify "ОШИБКА: /data не смонтирован!"
+    exit 1
+  fi
+
   if swapon --show=NAME --noheadings | grep -Fxq "${{swapfile}}"; then
     echo "$(date -Is) samovar-provision: swap ${{swapfile}} already active"
   elif [ -f "${{swapfile}}" ]; then
@@ -679,14 +706,14 @@ journalctl --vacuum-size=90M || true
 # ── Package installation ──────────────────────────────────────────────────────
 {_offline_apt_install}
 
-install_with_offline_fallback \\
-    openssh-server openssh-client wpasupplicant iw linux-firmware wireless-regdb \\
-    netplan.io rfkill iproute2 ethtool pciutils dnsutils rsync gnupg ffmpeg lm-sensors \\
-    curl ca-certificates docker.io docker-compose-v2 ufw \\
-    smartmontools btop tmux git jq unattended-upgrades \\
-    linux-image-generic linux-modules-nvidia-595-open-generic \\
-    nvidia-headless-no-dkms-595-open nvidia-utils-595 libnvidia-encode-595 \\
-    netbird libnvidia-container1 libnvidia-container-tools \\
+install_with_offline_fallback \
+    openssh-server openssh-client wpasupplicant iw linux-firmware wireless-regdb \
+    netplan.io rfkill iproute2 ethtool pciutils dnsutils rsync gnupg ffmpeg lm-sensors \
+    curl ca-certificates docker.io docker-compose-v2 ufw \
+    smartmontools btop nvtop tmux git jq unattended-upgrades \
+    linux-image-generic linux-modules-nvidia-595-open-generic \
+    nvidia-headless-no-dkms-595-open nvidia-utils-595 libnvidia-encode-595 \
+    netbird libnvidia-container1 libnvidia-container-tools \
     nvidia-container-toolkit-base nvidia-container-toolkit
 notify "Базовые пакеты установлены"
 
@@ -697,7 +724,10 @@ install -d -m 0755 /etc/mihomo /var/lib/mihomo
 MIHOMO_GEOIP_FILE=/etc/mihomo/geoip.metadb
 MIHOMO_GEOIP_URL=https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb
 if [ ! -s "$MIHOMO_GEOIP_FILE" ]; then
-  if curl --fail --location --connect-timeout 5 --max-time 60 --retry 2 \
+  if [ -s /var/lib/samovar-offline-artifacts/geoip.metadb ]; then
+    install -m 0644 /var/lib/samovar-offline-artifacts/geoip.metadb "$MIHOMO_GEOIP_FILE"
+    echo "$(date -Is) samovar-provision: Mihomo GeoIP database restored from offline artifacts"
+  elif curl --fail --location --connect-timeout 5 --max-time 60 --retry 2 \
       --output "${{MIHOMO_GEOIP_FILE}}.tmp" "$MIHOMO_GEOIP_URL"; then
     install -m 0644 "${{MIHOMO_GEOIP_FILE}}.tmp" "$MIHOMO_GEOIP_FILE"
     rm -f "${{MIHOMO_GEOIP_FILE}}.tmp"
@@ -719,7 +749,13 @@ command -v netbird
 notify "NetBird установлен"
 
 # ── Docker ───────────────────────────────────────────────────────────────────
-install -d -m 0755 /etc/docker
+install -d -m 0755 /etc/docker /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/mounts.conf <<'EOF'
+[Unit]
+RequiresMountsFor=/data
+After=data.mount
+EOF
+systemctl daemon-reload
 cat > /etc/docker/daemon.json <<'EOF'
 {{
   "log-driver": "local",
@@ -732,8 +768,18 @@ cat > /etc/docker/daemon.json <<'EOF'
 EOF
 
 # ── /data and /archive subdirectories ────────────────────────────────────────
+if ! mountpoint -q /data; then
+  echo "ERROR: /data is not mounted! Refusing to initialize Docker directories on root filesystem." >&2
+  logger -t samovar-provision "ERROR: /data is not mounted!"
+  notify "ОШИБКА: /data не смонтирован!"
+  exit 1
+fi
 install -d -m 0755 /data/docker /data/models /data/cache /data/tmp
-install -d -m 0755 /archive/incoming /archive/output /archive/backups
+if mountpoint -q /archive; then
+  install -d -m 0755 /archive/incoming /archive/output /archive/backups
+else
+  echo "$(date -Is) samovar-provision: WARNING /archive is not mounted; skipping archive subdirectories" >&2
+fi
 
 usermod -aG docker {shlex.quote(username)}
 systemctl enable --now docker.service
@@ -909,7 +955,10 @@ def _load_mihomo_env() -> str:
 
 def _load_samovar_config_bytes() -> str:
     """Return samovar-config.json content for embedding, or empty string."""
-    cfg_path = Path(os.environ.get("SAMOVAR_CONFIG_FILE", "samovar-config.json"))
+    cfg_env = os.environ.get("SAMOVAR_CONFIG_FILE", "samovar-config.json")
+    cfg_path = Path(cfg_env)
+    if not cfg_path.is_absolute() and not cfg_path.exists():
+        cfg_path = Path(__file__).resolve().parent / cfg_env
     if cfg_path.exists():
         return cfg_path.read_text(encoding="utf-8")
     return ""
@@ -917,7 +966,11 @@ def _load_samovar_config_bytes() -> str:
 
 def _load_samovar_config_sig() -> str:
     """Return samovar-config.json.sig content for embedding, or empty string."""
-    sig_path = Path(os.environ.get("SAMOVAR_CONFIG_FILE", "samovar-config.json") + ".sig")
+    cfg_env = os.environ.get("SAMOVAR_CONFIG_FILE", "samovar-config.json")
+    cfg_path = Path(cfg_env)
+    if not cfg_path.is_absolute() and not cfg_path.exists():
+        cfg_path = Path(__file__).resolve().parent / cfg_env
+    sig_path = Path(str(cfg_path) + ".sig")
     if sig_path.exists():
         return sig_path.read_text(encoding="utf-8")
     return ""
@@ -964,6 +1017,12 @@ def build_write_files_generic() -> list[dict[str, str]]:
             "owner": "root:root",
             "permissions": "0644",
             "content": "alias compose='docker compose'\n",
+        },
+        {
+            "path": "/etc/samovar-build.env",
+            "owner": "root:root",
+            "permissions": "0644",
+            "content": f"UBUNTU_ISO_SHA256={UBUNTU_ISO_SHA256}\n",
         },
     ]
 
@@ -1102,6 +1161,14 @@ def build_write_files_samovar() -> list[dict[str, str]]:
         "content": "alias compose='docker compose'\n",
     })
 
+    # ── Docker mount guard ────────────────────────────────────────────────────
+    files.append({
+        "path": "/etc/systemd/system/docker.service.d/mounts.conf",
+        "owner": "root:root",
+        "permissions": "0644",
+        "content": "[Unit]\nRequiresMountsFor=/data\nAfter=data.mount\n",
+    })
+
     # ── Wi-Fi systemd.link (rename by MAC without Netplan match) ─────────────
     if NETWORK_INTERFACE in {"both", "wifi0"}:
         files.append({
@@ -1110,6 +1177,13 @@ def build_write_files_samovar() -> list[dict[str, str]]:
             "permissions": "0644",
             "content": "[Match]\nMACAddress=34:13:e8:3c:b5:9a\n\n[Link]\nName=wifi0\n",
         })
+
+    files.append({
+        "path": "/etc/samovar-build.env",
+        "owner": "root:root",
+        "permissions": "0644",
+        "content": f"UBUNTU_ISO_SHA256={UBUNTU_ISO_SHA256}\n",
+    })
 
     return files
 

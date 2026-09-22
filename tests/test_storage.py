@@ -164,7 +164,7 @@ def _get_rendered_yaml(disk_serial_prefix: str = "", swap_size_gib: str = "1") -
         "NETBIRD_SETUP_KEY": "test-setup-key-00000000-0000-0000-0000-000000000000",
         "ARCH": "amd64",
         "APT_REGION": "auto",
-        "ALLOWED_SIGNERS": "test@example namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKeyMaterialOnlyNotReal",
+        "ALLOWED_SIGNERS": "alex@samovar namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILS64jfH6rfVS9J88BHRKv231PMvsRDRRSDjLRAh3FSj",
     })
     result = subprocess.run(
         [sys.executable, str(RENDER)],

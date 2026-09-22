@@ -156,7 +156,7 @@ class TestSamovarIsoValidation(unittest.TestCase):
                 "SSH_PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey alex@samovar",
                 "ARCH": "amd64",
                 "APT_REGION": "auto",
-                "ALLOWED_SIGNERS": "alex@samovar namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey",
+                "ALLOWED_SIGNERS": "alex@samovar namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILS64jfH6rfVS9J88BHRKv231PMvsRDRRSDjLRAh3FSj",
             }
         )
         res = subprocess.run(
@@ -197,6 +197,7 @@ class TestSamovarIsoValidation(unittest.TestCase):
                 "SSH_PUBLIC_KEYS": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey alex@samovar",
                 "ARCH": "amd64",
                 "APT_REGION": "auto",
+                "ALLOWED_SIGNERS": "alex@samovar namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILS64jfH6rfVS9J88BHRKv231PMvsRDRRSDjLRAh3FSj",
             }
         )
         res = subprocess.run(
@@ -369,6 +370,7 @@ class TestSshKeyValidation(unittest.TestCase):
                 "PASSWORD_HASH": "$6$rounds=4096$salt$hash",
                 "ARCH": "amd64",
                 "APT_REGION": "auto",
+                "ALLOWED_SIGNERS": "alex@samovar namespaces=\"samovar-recovery\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILS64jfH6rfVS9J88BHRKv231PMvsRDRRSDjLRAh3FSj",
             }
         )
         if mode == "generic":
@@ -451,6 +453,47 @@ class TestSshKeyValidation(unittest.TestCase):
         )
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("valid OpenSSH key type", res.stderr)
+
+    def test_render_fails_when_samovar_config_tampered(self) -> None:
+        import json
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "samovar-config.json"
+            sig = Path(td) / "samovar-config.json.sig"
+            data = json.loads((ROOT / "samovar-config.json").read_text(encoding="utf-8"))
+            data["generation"] += 1
+            cfg.write_text(json.dumps(data), encoding="utf-8")
+            sig.write_bytes((ROOT / "samovar-config.json.sig").read_bytes())
+
+            env = self._base_env("samovar")
+            env["SSH_PUBLIC_KEYS"] = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey test@example"
+            env["SAMOVAR_CONFIG_FILE"] = str(cfg)
+            res = subprocess.run(
+                [sys.executable, str(RENDER)],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(ROOT),
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("SSH signature verification failed", res.stderr)
+
+    def test_render_fails_when_samovar_config_sig_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "samovar-config.json"
+            cfg.write_text((ROOT / "samovar-config.json").read_text(encoding="utf-8"))
+
+            env = self._base_env("samovar")
+            env["SSH_PUBLIC_KEYS"] = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey test@example"
+            env["SAMOVAR_CONFIG_FILE"] = str(cfg)
+            res = subprocess.run(
+                [sys.executable, str(RENDER)],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(ROOT),
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("Detached signature file not found", res.stderr)
 
 
 if __name__ == "__main__":

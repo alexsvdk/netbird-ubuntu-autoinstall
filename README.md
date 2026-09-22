@@ -184,14 +184,28 @@ python3 -m pytest tests/ -v
 ## Samovar Autoinstall (`samovar` server profile)
 
 This repository includes a specialized, hardened autoinstall target for the **`samovar`** home lab server.
-Features include:
-- **Disk mapping by exact serial numbers** (Kingston SSD, SBSSD, WD HDD) — no destructive size-based matching.
-- **Fail-closed preflight hardware verification** before any disk partitioning.
-- **Detached SSH-signed configuration** (`samovar-config.json` + `samovar-config.json.sig`).
-- **Emergency USB recovery agent** (`SAMOVARCFG` FAT32 drive) with transactional rollbacks and replay protection.
-- **Isolated host management plane** (SSH, NetBird, recovery operate directly; Mihomo proxy/TUN for workloads).
-- **Docker + NVIDIA RTX 3060 provisioning** with Compose templates for Direct, Proxy, and Full TUN egress.
-- **Per-interface firewall rules** (SSH strictly on `wt0`, `wifi0`, and `lan0`).
+
+### Target Hardware & Architecture
+- **Host**: Acer Aspire TC-605, Intel Core i7-4770, 16 GB DDR3 RAM, NVIDIA GeForce RTX 3060 12 GB.
+- **Architecture**: Strictly **`amd64`** (`x86_64`). Arm64 builds are rejected in Samovar mode.
+- **OS**: Ubuntu Server 26.04.1 LTS (Resolute). Source ISO integrity is verified via SHA-256 against Canonical's official `SHA256SUMS`.
+
+### Storage Architecture (3 Disks by Serial)
+Preflight hardware validation strictly verifies the exact serial numbers of all 3 drives before formatting:
+- **System**: Kingston SSD 240 GB (`50026B7683695BFE`) → `/` (ext4) and `/boot/efi` (ESP).
+- **Fast Data**: SBSSD 240 GB (`TD2023102401304`) → `/data` (ext4). Hosts Docker root (`/data/docker`), models, cache, and `/data/swapfile`. Guarded by systemd `RequiresMountsFor=/data`.
+- **Bulk Storage**: Western Digital HDD 1 TB (`WCC3F1336131`) → `/archive` (ext4). Hosts backups, incoming, and processed datasets.
+
+### Network Interfaces & Wi-Fi
+- **Ethernet (`lan0`)**: Realtek RTL8111/8168/8411 PCI-E Gigabit Ethernet (`44:8a:5b:64:11:2b`).
+- **Wi-Fi (`wifi0`)**: Intel Dual Band Wireless-AC 8260 (`34:13:e8:3c:b5:9a`). Renamed to `wifi0` via persistent systemd link and matched by MAC address in Netplan.
+- **WireGuard / NetBird (`wt0`)**: Full ingress/egress mesh tunnel for administration and remote services.
+
+### Signed Recovery & Bootstrap
+- **Bootstrap Inbox**: Configuration is signed with an SSH Ed25519 key (`samovar-recovery` namespace) and verified at build time and on first boot.
+- **USB Recovery Agent**: External FAT32 drive labeled `SAMOVARCFG` can deliver signed updates (`samovar-config.json` + `.sig`) with monotonic generation checks (replay protection) and transactional rollbacks.
+- **Offline Artifacts**: Local APT repository, Mihomo OCI image, and `geoip.metadb` are embedded in the ISO so installation succeeds without initial network connectivity.
+- **Kill Switch**: `vpn.compose.yml` includes an `iptables` kill switch preventing unencrypted traffic leaks if the VPN sidecar or Mihomo fails.
 
 For detailed end-to-end instructions, see **[INSTRUCTIONS.md](INSTRUCTIONS.md)** and the technical specification in [samovar-autoinstall-spec.md](samovar-autoinstall-spec.md).
 

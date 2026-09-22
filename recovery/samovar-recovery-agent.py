@@ -414,9 +414,12 @@ HTTPS_RE = re.compile(r"^https://", re.IGNORECASE)
 
 def validate_schema(cfg: dict) -> None:
     """
-    Validate config against spec §6.3/§6.4.  Raises SchemaError on any
-    violation.  Unknown top-level fields are rejected.
+    Validate config against spec §6.3/§6.4 and samovar-config.schema.json.
+    Raises SchemaError on any violation. Unknown top-level fields are rejected.
     """
+    if not isinstance(cfg, dict):
+        raise SchemaError("Configuration must be a JSON object.")
+
     # Unknown top-level fields
     unknown = set(cfg.keys()) - KNOWN_TOP_LEVEL_FIELDS
     if unknown:
@@ -443,9 +446,10 @@ def validate_schema(cfg: dict) -> None:
             f"generation must be a positive integer, got {generation!r}."
         )
 
-    # created_at (optional but must be ISO 8601 if present)
-    if "created_at" in cfg:
-        _validate_iso8601(cfg["created_at"])
+    # created_at is REQUIRED by schema §6.3
+    if "created_at" not in cfg:
+        raise SchemaError("created_at is required.")
+    _validate_iso8601(cfg["created_at"])
 
     # wifi section (optional)
     if "wifi" in cfg:
@@ -472,6 +476,9 @@ def _validate_iso8601(value: Any) -> None:
 def _validate_wifi(wifi: Any) -> None:
     if not isinstance(wifi, dict):
         raise SchemaError("wifi must be an object.")
+    unknown_wifi = set(wifi.keys()) - {"mode", "networks"}
+    if unknown_wifi:
+        raise SchemaError(f"wifi has unknown fields: {sorted(unknown_wifi)}")
     mode = wifi.get("mode", "merge")
     if mode not in ("merge", "replace"):
         raise SchemaError(f"wifi.mode must be 'merge' or 'replace', got {mode!r}.")
@@ -483,25 +490,36 @@ def _validate_wifi(wifi: Any) -> None:
     for i, net in enumerate(networks):
         if not isinstance(net, dict):
             raise SchemaError(f"wifi.networks[{i}] must be an object.")
-        missing = WIFI_NETWORK_REQUIRED - set(net.keys())
-        if missing:
-            raise SchemaError(
-                f"wifi.networks[{i}] missing required fields: {sorted(missing)}"
-            )
-        if not isinstance(net["ssid"], str) or not net["ssid"]:
-            raise SchemaError(f"wifi.networks[{i}].ssid must be a non-empty string.")
-        if not isinstance(net["password"], str):
-            raise SchemaError(f"wifi.networks[{i}].password must be a string.")
-        unknown = set(net.keys()) - WIFI_NETWORK_REQUIRED - WIFI_NETWORK_OPTIONAL
+        unknown = set(net.keys()) - {"ssid", "password", "hidden"}
         if unknown:
             raise SchemaError(
                 f"wifi.networks[{i}] has unknown fields: {sorted(unknown)}"
             )
+        missing = {"ssid", "password"} - set(net.keys())
+        if missing:
+            raise SchemaError(
+                f"wifi.networks[{i}] missing required fields: {sorted(missing)}"
+            )
+        ssid = net["ssid"]
+        if not isinstance(ssid, str) or not (1 <= len(ssid) <= 32):
+            raise SchemaError(
+                f"wifi.networks[{i}].ssid must be a string with 1..32 chars, got {ssid!r}."
+            )
+        password = net["password"]
+        if not isinstance(password, str) or not (8 <= len(password) <= 63):
+            raise SchemaError(
+                f"wifi.networks[{i}].password must be a string with 8..63 chars."
+            )
+        if "hidden" in net and not isinstance(net["hidden"], bool):
+            raise SchemaError(f"wifi.networks[{i}].hidden must be a boolean.")
 
 
 def _validate_netbird(nb: Any) -> None:
     if not isinstance(nb, dict):
         raise SchemaError("netbird must be an object.")
+    unknown = set(nb.keys()) - {"profile", "management_url", "setup_key"}
+    if unknown:
+        raise SchemaError(f"netbird has unknown fields: {sorted(unknown)}")
     required = {"profile", "management_url", "setup_key"}
     missing = required - set(nb.keys())
     if missing:
@@ -520,20 +538,39 @@ def _validate_netbird(nb: Any) -> None:
 def _validate_mihomo(mh: Any) -> None:
     if not isinstance(mh, dict):
         raise SchemaError("mihomo must be an object.")
+    unknown = set(mh.keys()) - {"enabled", "config"}
+    if unknown:
+        raise SchemaError(f"mihomo has unknown fields: {sorted(unknown)}")
     if "enabled" not in mh:
         raise SchemaError("mihomo.enabled is required.")
     if not isinstance(mh["enabled"], bool):
         raise SchemaError("mihomo.enabled must be a boolean.")
-    if mh.get("enabled") and "config" not in mh:
-        raise SchemaError("mihomo.config is required when mihomo.enabled is true.")
-    if "config" in mh:
-        cfg = mh["config"]
-        if not isinstance(cfg, dict):
-            raise SchemaError("mihomo.config must be an object.")
-        # Must have at least one inline proxy node (spec §6.4)
-        proxies = cfg.get("proxies", [])
-        if not isinstance(proxies, list):
-            raise SchemaError("mihomo.config.proxies must be an array.")
+    if "config" not in mh:
+        raise SchemaError("mihomo.config is required when mihomo is present.")
+    cfg = mh["config"]
+    if not isinstance(cfg, dict):
+        raise SchemaError("mihomo.config must be an object.")
+    required_cfg = {"mode", "mixed-port", "proxies", "proxy-groups", "rules"}
+    missing = required_cfg - set(cfg.keys())
+    if missing:
+        raise SchemaError(f"mihomo.config missing required fields: {sorted(missing)}")
+    if not isinstance(cfg["mode"], str) or not cfg["mode"]:
+        raise SchemaError("mihomo.config.mode must be a non-empty string.")
+    port = cfg["mixed-port"]
+    if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
+        raise SchemaError(f"mihomo.config.mixed-port must be an integer (1..65535), got {port!r}.")
+    # Must have at least one inline proxy node (spec §6.4)
+    proxies = cfg.get("proxies")
+    if not isinstance(proxies, list) or len(proxies) == 0:
+        raise SchemaError("mihomo.config.proxies must be a non-empty array.")
+    if not isinstance(cfg["proxy-groups"], list):
+        raise SchemaError("mihomo.config.proxy-groups must be an array.")
+    rules = cfg["rules"]
+    if not isinstance(rules, list):
+        raise SchemaError("mihomo.config.rules must be an array.")
+    for i, r in enumerate(rules):
+        if not isinstance(r, str):
+            raise SchemaError(f"mihomo.config.rules[{i}] must be a string.")
 
 
 # ---------------------------------------------------------------------------
@@ -542,16 +579,21 @@ def _validate_mihomo(mh: Any) -> None:
 
 
 def load_state() -> dict:
-    """Load state.json or return an empty state if it does not exist."""
+    """Load state.json or return initial generation 0 if file does not exist."""
     p = Path(STATE_FILE)
     if not p.exists():
         return {"last_generation": 0}
     try:
-        with p.open() as fh:
-            return json.load(fh)
+        with p.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+            if not isinstance(data, dict) or "last_generation" not in data or not isinstance(data["last_generation"], int):
+                raise RecoveryError(f"state.json has invalid structure: {data!r}")
+            return data
     except (json.JSONDecodeError, OSError) as exc:
-        log.warning("Could not read state.json (%s); treating as empty.", exc)
-        return {"last_generation": 0}
+        log.error("Could not read state.json (%s); refusing to treat as empty.", exc)
+        raise RecoveryError(
+            f"State file {STATE_FILE} is corrupt or unreadable: {exc}. Replay protection cannot proceed."
+        ) from exc
 
 
 def check_replay(cfg: dict, state: dict) -> None:
@@ -670,30 +712,57 @@ def _netplan_access_points(networks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _read_existing_access_points() -> list[dict]:
+    """
+    Parse existing Netplan YAML files and return a list of configured Wi-Fi networks:
+    [{"ssid": ..., "password": ..., "hidden": ...}, ...]
+    """
+    existing: dict[str, dict] = {}
+    netplan_files: list[Path] = []
+    managed = Path(NETPLAN_MANAGED_FILE)
+    if managed.exists():
+        netplan_files.append(managed)
+    netplan_dir = Path("/etc/netplan")
+    if netplan_dir.is_dir():
+        for fp in sorted(netplan_dir.glob("*.yaml")):
+            if fp not in netplan_files:
+                netplan_files.append(fp)
+
+    for filepath in netplan_files:
+        try:
+            content = filepath.read_text(encoding="utf-8")
+            data = yaml.safe_load(content)
+            if not isinstance(data, dict):
+                continue
+            wifis = data.get("network", {}).get("wifis", {})
+            if not isinstance(wifis, dict):
+                continue
+            for iface_cfg in wifis.values():
+                if not isinstance(iface_cfg, dict):
+                    continue
+                aps = iface_cfg.get("access-points", {})
+                if not isinstance(aps, dict):
+                    continue
+                for ssid, ap_cfg in aps.items():
+                    if not isinstance(ap_cfg, dict):
+                        continue
+                    password = ap_cfg.get("password")
+                    if not password and isinstance(ap_cfg.get("auth"), dict):
+                        password = ap_cfg["auth"].get("password")
+                    if password:
+                        entry = {"ssid": str(ssid), "password": str(password)}
+                        if ap_cfg.get("hidden"):
+                            entry["hidden"] = True
+                        existing[str(ssid)] = entry
+        except Exception as exc:
+            log.warning("Could not parse existing netplan file %s: %s", filepath, exc)
+
+    return list(existing.values())
+
+
 def _read_existing_netplan() -> dict[str, dict]:
-    """
-    Parse the existing managed Netplan file and return a dict of
-    {ssid: network_block} for SSIDs that are NOT samovar-managed.
-    Returns empty dict if the file does not exist or has no non-managed entries.
-    """
-    p = Path(NETPLAN_MANAGED_FILE)
-    if not p.exists():
-        return {}
-    # Simple line-based SSID extractor; we track which are samovar-managed.
-    content = p.read_text()
-    non_managed: dict[str, str] = {}
-    lines = content.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        # Detect indented SSID key in access-points block
-        # Format: '        "SSID": # samovar-managed'
-        stripped = line.strip()
-        if stripped.endswith(SAMOVAR_MANAGED_COMMENT):
-            pass  # managed — skip
-        i += 1
-    # For merge mode we need existing managed SSIDs too; handled in generate below
-    return non_managed
+    """Backward compatibility helper for tests."""
+    return {item["ssid"]: item for item in _read_existing_access_points()}
 
 
 def _collect_existing_managed_ssids() -> list[str]:
@@ -704,7 +773,6 @@ def _collect_existing_managed_ssids() -> list[str]:
     ssids: list[str] = []
     for line in p.read_text().splitlines():
         if SAMOVAR_MANAGED_COMMENT in line:
-            # Extract SSID from: '        "SSID": # samovar-managed'
             stripped = line.strip()
             raw = stripped.replace(SAMOVAR_MANAGED_COMMENT, "").rstrip(": ")
             ssid = raw.strip().strip('"')
@@ -750,8 +818,8 @@ network:
 def apply_wifi(wifi_cfg: dict) -> None:
     """
     Apply Wi-Fi configuration transactionally (spec §10.3).
-    mode=merge: add new networks, keep existing samovar-managed SSIDs.
-    mode=replace: replace only samovar-managed SSIDs.
+    mode=merge: add new networks, keep existing SSIDs not re-specified.
+    mode=replace: replace with new list.
     """
     mode = wifi_cfg.get("mode", "merge")
     new_networks: list[dict] = wifi_cfg["networks"]
@@ -764,21 +832,11 @@ def apply_wifi(wifi_cfg: dict) -> None:
 
     # --- Build final network list ---
     if mode == "merge":
-        # Keep all existing samovar-managed SSIDs not in new list; add new ones
-        existing_ssids = set(_collect_existing_managed_ssids())
+        existing_networks = _read_existing_access_points()
         new_ssids = {n["ssid"] for n in new_networks}
-        # Networks from new config take precedence; retained managed ones not
-        # re-specified are kept as-is via the file (we regenerate from new list
-        # because passwords may change — for merge we include new list directly)
-        # Per spec §10.2: "new networks are added, old ones are kept"
-        # Interpretation: new_networks IS the new set; old SSIDs not in new list
-        # remain in the file if they were previously managed.
-        # We use new_networks as the canonical list for merge (full replacement
-        # of access-points block is the safe choice since we do not store
-        # passwords for existing entries separately).
-        final_networks = new_networks
+        merged = [n for n in existing_networks if n["ssid"] not in new_ssids]
+        final_networks = merged + new_networks
     else:  # replace
-        # Replace ALL samovar-managed SSIDs with new list
         final_networks = new_networks
 
     yaml_content = generate_netplan_yaml(final_networks)
@@ -822,7 +880,7 @@ def apply_wifi(wifi_cfg: dict) -> None:
         _run(["netplan", "apply"], timeout=60)
         log.info("netplan apply succeeded.")
 
-        # Verify default route
+        # Verify default route and endpoints fail closed
         _verify_default_route()
 
     except (RecoveryError, OSError) as exc:
@@ -835,15 +893,36 @@ def apply_wifi(wifi_cfg: dict) -> None:
 
 
 def _verify_default_route() -> None:
-    """Check that at least one default route and reachable endpoint exists."""
-    try:
-        result = _run(["ip", "route", "show", "default"], timeout=10)
-        output = (result.stdout or b"").decode().strip()
-        if not output:
-            raise RecoveryError("No default route found after netplan apply.")
-        log.info("Default route present: %s", output.split("\n")[0])
-    except RecoveryError:
-        log.warning("Could not verify default route; proceeding.")
+    """Check that at least one default route and reachable endpoint exists (spec §10.3)."""
+    result = _run(["ip", "route", "show", "default"], check=False, timeout=10)
+    output = (result.stdout or b"").decode().strip()
+    if not output:
+        raise RecoveryError("No default route found after netplan apply.")
+    log.info("Default route present: %s", output.split("\n")[0])
+
+    reachable = False
+    for endpoint in HEALTHCHECK_ENDPOINTS:
+        try:
+            ping_res = _run(["ping", "-c", "1", "-W", "3", endpoint], check=False, timeout=5)
+            if ping_res.returncode == 0:
+                log.info("Healthcheck endpoint %s is reachable via ping.", endpoint)
+                reachable = True
+                break
+        except Exception:
+            pass
+
+    if not reachable:
+        can_route = False
+        for endpoint in HEALTHCHECK_ENDPOINTS:
+            res = _run(["ip", "route", "get", endpoint], check=False, timeout=5)
+            if res.returncode == 0 and b"via" in (res.stdout or b""):
+                can_route = True
+                log.info("Route to healthcheck endpoint %s resolved via gateway.", endpoint)
+                break
+        if not can_route:
+            raise RecoveryError(
+                f"Network healthcheck failed: none of the healthcheck endpoints ({HEALTHCHECK_ENDPOINTS}) are reachable."
+            )
 
 
 def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
@@ -919,6 +998,28 @@ def _write_setup_key_file(setup_key: str) -> Path:
     return key_path
 
 
+def _is_netbird_connected(output: str) -> bool:
+    """Check if NetBird status output represents a successfully connected state."""
+    lines = output.splitlines()
+    for line in lines:
+        line_clean = line.strip().lower()
+        if "management:" in line_clean:
+            return "connected" in line_clean and "disconnected" not in line_clean
+        if "status:" in line_clean:
+            return "connected" in line_clean and "disconnected" not in line_clean
+    if re.search(r"\bmanagement:\s*connected\b", output, re.IGNORECASE):
+        return True
+    try:
+        data = json.loads(output)
+        if isinstance(data, dict):
+            status = data.get("status") or data.get("management", {}).get("status")
+            if isinstance(status, str) and status.lower() == "connected":
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _netbird_wait_connected(timeout_s: int = 120) -> bool:
     """Poll netbird status until connected or timeout."""
     deadline = time.monotonic() + timeout_s
@@ -930,8 +1031,8 @@ def _netbird_wait_connected(timeout_s: int = 120) -> bool:
                 check=False,
                 timeout=15,
             )
-            output = (result.stdout or b"").decode().lower()
-            if "connected" in output:
+            output = (result.stdout or b"").decode()
+            if _is_netbird_connected(output):
                 log.info("NetBird status: connected.")
                 return True
         except RecoveryError:
@@ -1012,16 +1113,34 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
         raise RecoveryError("NetBird connection not established after netbird up.")
 
     # Verify management URL matches
+    verified_url = False
     try:
         result = _run(["netbird", "status", "--output", "json"], check=False, timeout=15)
         status_raw = (result.stdout or b"").decode()
-        if management_url not in status_raw:
-            log.warning(
-                "Management URL %s not confirmed in netbird status output.",
-                management_url,
-            )
+        if status_raw:
+            try:
+                status_json = json.loads(status_raw)
+                reported_url = (
+                    status_json.get("management_url")
+                    or status_json.get("management", {}).get("url")
+                    or status_json.get("managementURL")
+                )
+                if reported_url and reported_url.rstrip("/").lower() == management_url.rstrip("/").lower():
+                    verified_url = True
+            except json.JSONDecodeError:
+                pass
+        if not verified_url and management_url in status_raw:
+            verified_url = True
     except RecoveryError:
         pass
+
+    if not verified_url:
+        log.error(
+            "Management URL mismatch or unconfirmed for %s; rolling back.",
+            management_url,
+        )
+        _netbird_rollback(old_profile, profile_name if profile_created else None)
+        raise RecoveryError(f"NetBird management URL mismatch: expected {management_url}")
 
     # Delete old profile
     if old_profile and old_profile != profile_name:
@@ -1181,6 +1300,15 @@ def _ensure_mihomo_geoip() -> None:
         pass
 
     geoip_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check offline artifacts cache first
+    offline_geoip = Path("/var/lib/samovar-offline-artifacts/geoip.metadb")
+    if offline_geoip.is_file() and offline_geoip.stat().st_size > 0:
+        shutil.copy2(offline_geoip, geoip_path)
+        geoip_path.chmod(0o644)
+        log.info("Mihomo GeoIP database restored from offline artifacts at %s.", offline_geoip)
+        return
+
     with tempfile.NamedTemporaryFile(
         mode="wb", dir=geoip_path.parent, prefix=".geoip-", delete=False
     ) as tmp_fh:
@@ -1337,21 +1465,59 @@ def apply_mihomo(mihomo_cfg: dict) -> str | None:
 
 
 def _mihomo_healthcheck() -> None:
-    """Verify Mihomo is listening on expected port."""
+    """Verify Mihomo is listening on expected port and passing traffic."""
     import socket
+    import urllib.request
 
     host, port = "127.0.0.1", 7890
     deadline = time.monotonic() + 30
+    port_open = False
     while time.monotonic() < deadline:
         try:
             with socket.create_connection((host, port), timeout=3):
-                log.info("Mihomo healthcheck OK (port %d reachable).", port)
-                return
+                port_open = True
+                log.info("Mihomo port %d reachable.", port)
+                break
         except OSError:
-            time.sleep(2)
-    raise RecoveryError(
-        f"Mihomo healthcheck failed: port {port} not reachable within 30s."
-    )
+            time.sleep(1)
+
+    if not port_open:
+        raise RecoveryError(
+            f"Mihomo healthcheck failed: port {port} not reachable within 30s."
+        )
+
+    # Verify HTTP/HTTPS traffic through proxy (spec §12.4, §12.6)
+    proxy_handler = urllib.request.ProxyHandler({
+        "http": f"http://{host}:{port}",
+        "https": f"http://{host}:{port}",
+    })
+    opener = urllib.request.build_opener(proxy_handler)
+    test_urls = [
+        "https://cp.cloudflare.com/generate_204",
+        "https://www.gstatic.com/generate_204",
+        "https://api.ipify.org",
+    ]
+    traffic_ok = False
+    last_err: Exception | None = None
+    while time.monotonic() < deadline:
+        for url in test_urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "samovar-recovery/1.0"})
+                with opener.open(req, timeout=5) as resp:
+                    if resp.status in (200, 204):
+                        log.info("Mihomo healthcheck OK: proxy egress verified via %s (%s).", url, resp.status)
+                        traffic_ok = True
+                        break
+            except Exception as exc:
+                last_err = exc
+        if traffic_ok:
+            break
+        time.sleep(2)
+
+    if not traffic_ok:
+        raise RecoveryError(
+            f"Mihomo healthcheck failed: proxy at {host}:{port} did not pass HTTPS traffic (last error: {last_err})."
+        )
 
 
 def _mihomo_rollback(mihomo_path: Path, backup_path: Path) -> None:

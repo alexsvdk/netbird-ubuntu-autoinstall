@@ -126,7 +126,10 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("netbird libnvidia-container1", provision)
         self.assertIn("command -v netbird", provision)
         self.assertIn("nvidia-ctk runtime configure --runtime=docker", provision)
+        self.assertIn("nvtop", provision)
+        self.assertIn("mountpoint -q /data", provision)
         self.assertIn("install -d -m 0755 /etc/mihomo /var/lib/mihomo", provision)
+        self.assertIn("/var/lib/samovar-offline-artifacts/geoip.metadb", provision)
         self.assertIn("meta-rules-dat/releases/latest/download/geoip.metadb", provision)
         self.assertNotIn("/usr/local/bin/mihomo", provision)
         self.assertIn("systemctl enable mihomo.service", provision)
@@ -136,6 +139,9 @@ class PublicKitTests(unittest.TestCase):
         )
 
         files_by_path = {entry["path"]: entry["content"] for entry in files}
+        mounts_conf = files_by_path["/etc/systemd/system/docker.service.d/mounts.conf"]
+        self.assertIn("RequiresMountsFor=/data", mounts_conf)
+        self.assertIn("After=data.mount", mounts_conf)
         provision_service = files_by_path["/etc/systemd/system/samovar-provision.service"]
         self.assertIn("Type=oneshot", provision_service)
         self.assertIn("RemainAfterExit=yes", provision_service)
@@ -370,6 +376,96 @@ class PublicKitTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_ubuntu_iso_sha256_is_forwarded_by_build_entry_points(self) -> None:
+        for rel in (
+            "build-autoinstall-iso.sh",
+            "build-autoinstall-iso.ps1",
+            "build-autoinstall-iso.bat",
+            ".env.example",
+        ):
+            self.assertIn("UBUNTU_ISO_SHA256", (ROOT / rel).read_text(encoding="utf-8"))
+
+    def test_ubuntu_iso_sha256_default_and_custom_values_reach_yaml(self) -> None:
+        base_env = os.environ.copy()
+        base_env.update(
+            {
+                "HOSTNAME": "test-server",
+                "USERNAME": "server",
+                "PASSWORD_HASH": "$6$rounds=4096$testsalt$testhashvalueforunittestonly",
+                "SSH_PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKeyMaterialOnlyNotReal test@example",
+                "ARCH": "amd64",
+                "APT_REGION": "auto",
+                "SAMOVAR_MODE": "samovar",
+                "SAMOVAR_CONFIG_FILE": "/does-not-exist/samovar-config.json",
+            }
+        )
+        custom_sha = "cc8a95cde20f6ced61a322420de00f10cc3c90ced545daa46cb9c1a117f1d927"
+        for val in ("", custom_sha):
+            env = base_env.copy()
+            if not val:
+                env.pop("UBUNTU_ISO_SHA256", None)
+            else:
+                env["UBUNTU_ISO_SHA256"] = val
+            result = subprocess.run(
+                [sys.executable, str(RENDER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(ROOT),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            document = yaml.safe_load(result.stdout)["autoinstall"]
+            files = {entry["path"]: entry["content"] for entry in document["user-data"]["write_files"]}
+            self.assertIn("/etc/samovar-build.env", files)
+            self.assertEqual(files["/etc/samovar-build.env"], f"UBUNTU_ISO_SHA256={val}\n")
+
+        # Invalid sha must be rejected
+        env = base_env.copy()
+        env["UBUNTU_ISO_SHA256"] = "invalid_short_hash"
+        result = subprocess.run(
+            [sys.executable, str(RENDER)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(ROOT),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("UBUNTU_ISO_SHA256 must be a 64-character hex", result.stderr)
+
+    def test_samovar_mode_rejects_arm64(self) -> None:
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOSTNAME": "samovar",
+                "USERNAME": "alex",
+                "PASSWORD_HASH": "$6$rounds=4096$testsalt$testhashvalueforunittestonly",
+                "SSH_PUBLIC_KEYS": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKeyMaterialOnlyNotReal test@example",
+                "ARCH": "arm64",
+                "SAMOVAR_MODE": "samovar",
+                "SAMOVAR_CONFIG_FILE": "/does-not-exist/samovar-config.json",
+            }
+        )
+        result = subprocess.run(
+            [sys.executable, str(RENDER)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(ROOT),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Samovar mode requires ARCH=amd64", result.stderr)
+
+    def test_vpn_compose_contains_kill_switch(self) -> None:
+        vpn_compose = (ROOT / "provisioning" / "compose-templates" / "vpn.compose.yml").read_text(encoding="utf-8")
+        self.assertIn("NET_ADMIN", vpn_compose)
+        self.assertIn("iptables -P OUTPUT DROP", vpn_compose)
+        self.assertIn("iptables -A OUTPUT -o tun+ -j ACCEPT", vpn_compose)
+        self.assertIn("iptables -A OUTPUT -o lo -j ACCEPT", vpn_compose)
+        self.assertIn("127.0.0.11", vpn_compose)
 
 
 if __name__ == "__main__":

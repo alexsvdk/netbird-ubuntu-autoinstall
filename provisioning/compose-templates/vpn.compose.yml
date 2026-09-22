@@ -31,6 +31,26 @@ services:
       - ./mihomo-vpn.yaml:/root/.config/mihomo/config.yaml:ro
     sysctls:
       - net.ipv4.ip_forward=1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Kill switch: drop all outbound traffic by default so that if mihomo crashes
+        # or the tunnel collapses, unencrypted traffic from sidecar apps cannot leak.
+        if command -v iptables >/dev/null 2>&1; then
+          iptables -P OUTPUT DROP
+          iptables -A OUTPUT -o lo -j ACCEPT
+          iptables -A OUTPUT -o tun+ -j ACCEPT
+          iptables -A OUTPUT -o Meta -j ACCEPT
+          iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          # Allow DNS resolution via Docker internal resolver (127.0.0.11)
+          iptables -A OUTPUT -p udp -d 127.0.0.11 --dport 53 -j ACCEPT
+          iptables -A OUTPUT -p tcp -d 127.0.0.11 --dport 53 -j ACCEPT
+          # Allow Docker bridge subnets for proxy / gateway reachability
+          iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+        fi
+        exec /mihomo -d /root/.config/mihomo
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090"]
       interval: 30s

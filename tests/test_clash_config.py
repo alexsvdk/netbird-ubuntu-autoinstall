@@ -140,11 +140,11 @@ class TestClashBootstrapRequirements(unittest.TestCase):
     def test_valid_bootstrap_node_passes_schema(self) -> None:
         validate_schema(self.base_payload)
 
-    def test_empty_proxies_array_passes_or_fails_sensibly(self) -> None:
+    def test_empty_proxies_array_fails(self) -> None:
         payload = copy.deepcopy(self.base_payload)
         payload["mihomo"]["config"]["proxies"] = []
-        # Structural check: must be a list
-        validate_schema(payload)
+        with self.assertRaises(SchemaError):
+            validate_schema(payload)
 
     def test_non_list_proxies_fails(self) -> None:
         payload = copy.deepcopy(self.base_payload)

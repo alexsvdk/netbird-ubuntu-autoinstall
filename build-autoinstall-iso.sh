@@ -361,6 +361,29 @@ if [[ -z "$SAMOVAR_MODE" && -f "$WORK_DIR/samovar-config.json" ]]; then
 fi
 export SAMOVAR_MODE
 
+if [[ "$SAMOVAR_MODE" == "samovar" ]]; then
+  if [[ "$ARCH" != "amd64" ]]; then
+    echo "Error: Samovar mode requires ARCH=amd64 (target hardware is Acer Aspire TC-605 x86_64)." >&2
+    exit 1
+  fi
+  SAMOVAR_CONFIG_FILE="${SAMOVAR_CONFIG_FILE:-samovar-config.json}"
+  cfg_path="$WORK_DIR/$SAMOVAR_CONFIG_FILE"
+  [[ "$SAMOVAR_CONFIG_FILE" = /* ]] && cfg_path="$SAMOVAR_CONFIG_FILE"
+
+  if [[ ! -f "$cfg_path" ]]; then
+    echo "Error: Samovar mode requires a valid config file at $cfg_path." >&2
+    exit 1
+  fi
+  if [[ ! -f "${cfg_path}.sig" ]]; then
+    echo "Error: Samovar mode requires a detached signature file at ${cfg_path}.sig." >&2
+    exit 1
+  fi
+  if [[ -z "${ALLOWED_SIGNERS:-}" ]]; then
+    echo "Error: Samovar mode requires ALLOWED_SIGNERS to verify configuration." >&2
+    exit 1
+  fi
+fi
+
 DEFAULT_HOSTNAME="friend-server"
 DEFAULT_USERNAME="server"
 if [[ "$SAMOVAR_MODE" == "samovar" ]]; then
@@ -464,6 +487,48 @@ else
   echo "Using existing $ISO_NAME"
 fi
 
+echo "Verifying source ISO integrity..."
+EXPECTED_ISO_SHA256="${UBUNTU_ISO_SHA256:-}"
+if [[ -z "$EXPECTED_ISO_SHA256" ]]; then
+  if [[ "$ARCH" == "amd64" ]]; then
+    SHA_SUMS_URL="https://releases.ubuntu.com/${UBUNTU_SERIES}/SHA256SUMS"
+  else
+    SHA_SUMS_URL="https://cdimage.ubuntu.com/releases/${UBUNTU_SERIES}/release/SHA256SUMS"
+  fi
+  echo "Fetching official SHA256SUMS from $SHA_SUMS_URL..."
+  SHA_CONTENT="$(curl -fsSL "$SHA_SUMS_URL" 2>/dev/null || true)"
+  if [[ -n "$SHA_CONTENT" ]]; then
+    EXPECTED_ISO_SHA256="$(printf '%s\n' "$SHA_CONTENT" | awk -v iso="$ISO_NAME" '$2 == iso || $2 == ("*" iso) {print $1; exit}')"
+  fi
+fi
+
+if [[ -n "$EXPECTED_ISO_SHA256" ]]; then
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_ISO_SHA256="$(sha256sum "$WORK_DIR/$ISO_NAME" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL_ISO_SHA256="$(shasum -a 256 "$WORK_DIR/$ISO_NAME" | awk '{print $1}')"
+  else
+    ACTUAL_ISO_SHA256=""
+  fi
+
+  if [[ -n "$ACTUAL_ISO_SHA256" ]]; then
+    actual_lower="$(printf '%s' "$ACTUAL_ISO_SHA256" | tr '[:upper:]' '[:lower:]')"
+    expected_lower="$(printf '%s' "$EXPECTED_ISO_SHA256" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$actual_lower" != "$expected_lower" ]]; then
+      echo "Error: source ISO SHA-256 verification failed for $ISO_NAME!" >&2
+      echo "  Expected: $expected_lower" >&2
+      echo "  Actual:   $actual_lower" >&2
+      exit 1
+    fi
+    echo "Source ISO SHA-256 verified: $actual_lower"
+  fi
+else
+  echo "Warning: could not determine expected SHA-256 for $ISO_NAME; skipping source verification." >&2
+fi
+
+UBUNTU_ISO_SHA256="${UBUNTU_ISO_SHA256:-}"
+export UBUNTU_ISO_SHA256
+
 # APT mirror settings (optional; defaults keep Subiquity geoip country-mirror).
 APT_REGION="${APT_REGION:-auto}"
 APT_MIRROR="${APT_MIRROR:-}"
@@ -523,8 +588,15 @@ docker run --rm \
   -v "$DOCKER_WORK_DIR:/work" \
   -w /work \
   "ubuntu:${UBUNTU_SERIES}" bash -euc '
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils gnupg python3 >/dev/null
+    if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
+    else
+      if ! command -v python3 >/dev/null 2>&1; then
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null
+      fi
+    fi
     bash /work/offline/build-apt-bundle.sh \
       /work/offline/packages.seeds.json \
       /work/offline/packages.lock.json \
@@ -562,11 +634,12 @@ docker run --rm \
   -e ALLOWED_SIGNERS="${ALLOWED_SIGNERS:-}" \
   -e SSH_PUBLIC_KEYS="${SSH_PUBLIC_KEYS:-$SSH_PUBLIC_KEY}" \
   -e SUDO_NOPASSWD="${SUDO_NOPASSWD:-true}" \
+  -e UBUNTU_ISO_SHA256="$UBUNTU_ISO_SHA256" \
   -v "$DOCKER_WORK_DIR:/work" \
   -w /work \
   ubuntu:24.04 bash -euc '
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema >/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema openssh-client >/dev/null
 
     export PASSWORD_HASH
     PASSWORD_HASH="$(openssl passwd -6 "$PASSWORD")"
@@ -590,6 +663,7 @@ docker run --rm \
   -e NOTIFY_TOPIC="$NOTIFY_TOPIC" \
   -e MIHOMO_IMAGE="$MIHOMO_IMAGE" \
   -e OFFLINE_BUNDLE_CACHE="$OFFLINE_BUNDLE_CACHE" \
+  -e OFFLINE_ARTIFACT_CACHE="$OFFLINE_ARTIFACT_CACHE" \
   -v "$DOCKER_WORK_DIR:/work" \
   "${DOCKER_OUTPUT_MOUNT[@]}" \
   ubuntu:24.04 bash -euc '
@@ -618,6 +692,14 @@ docker run --rm \
       /tmp/iso-build/grub-patched.cfg \
       /tmp/iso-build/loopback-patched.cfg
 
+    geoip_map_args=()
+    if [ -f "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb" ]; then
+      geoip_map_args+=(-map "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb" /samovar-offline-artifacts/geoip.metadb)
+      if [ -f "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb.sha256" ]; then
+        geoip_map_args+=(-map "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb.sha256" /samovar-offline-artifacts/geoip.metadb.sha256)
+      fi
+    fi
+
     xorriso \
       -indev "/work/$ISO_NAME" \
       -outdev "$OUTPUT_ISO_PATH" \
@@ -627,6 +709,7 @@ docker run --rm \
       -map "/work/$OFFLINE_BUNDLE_CACHE/repository" /samovar-offline-apt \
       -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar" /samovar-offline-artifacts/mihomo-image.tar \
       -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar.sha256" /samovar-offline-artifacts/mihomo-image.tar.sha256 \
+      "${geoip_map_args[@]}" \
       -boot_image any replay
 
     xorriso \
