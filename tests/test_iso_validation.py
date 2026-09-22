@@ -456,15 +456,21 @@ class TestSshKeyValidation(unittest.TestCase):
 
     def test_render_fails_when_samovar_config_tampered(self) -> None:
         import json
+        fixture_dir = ROOT / "tests" / "fixtures"
+        fixture_cfg = fixture_dir / "samovar-config.json"
+        fixture_sig = fixture_dir / "samovar-config.json.sig"
+        fixture_signers = (fixture_dir / "test_allowed_signers").read_text(encoding="utf-8").strip()
+
         with tempfile.TemporaryDirectory() as td:
             cfg = Path(td) / "samovar-config.json"
             sig = Path(td) / "samovar-config.json.sig"
-            data = json.loads((ROOT / "samovar-config.json").read_text(encoding="utf-8"))
+            data = json.loads(fixture_cfg.read_text(encoding="utf-8"))
             data["generation"] += 1
             cfg.write_text(json.dumps(data), encoding="utf-8")
-            sig.write_bytes((ROOT / "samovar-config.json.sig").read_bytes())
+            sig.write_bytes(fixture_sig.read_bytes())
 
             env = self._base_env("samovar")
+            env["ALLOWED_SIGNERS"] = fixture_signers
             env["SSH_PUBLIC_KEYS"] = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey test@example"
             env["SAMOVAR_CONFIG_FILE"] = str(cfg)
             res = subprocess.run(
@@ -478,9 +484,10 @@ class TestSshKeyValidation(unittest.TestCase):
             self.assertIn("SSH signature verification failed", res.stderr)
 
     def test_render_fails_when_samovar_config_sig_missing(self) -> None:
+        fixture_cfg = ROOT / "tests" / "fixtures" / "samovar-config.json"
         with tempfile.TemporaryDirectory() as td:
             cfg = Path(td) / "samovar-config.json"
-            cfg.write_text((ROOT / "samovar-config.json").read_text(encoding="utf-8"))
+            cfg.write_text(fixture_cfg.read_text(encoding="utf-8"))
 
             env = self._base_env("samovar")
             env["SSH_PUBLIC_KEYS"] = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValidKey test@example"

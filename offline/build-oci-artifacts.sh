@@ -44,11 +44,12 @@ if not artifact_path.is_file():
     raise SystemExit("Error: locked Mihomo OCI artifact is missing.")
 if hashlib.sha256(artifact_path.read_bytes()).hexdigest() != by_name["mihomo"].get("sha256"):
     raise SystemExit("Error: Mihomo OCI artifact SHA-256 mismatch.")
-if "geoip" in by_name:
-    if not geoip_path.is_file():
-        raise SystemExit("Error: locked GeoIP artifact is missing.")
-    if hashlib.sha256(geoip_path.read_bytes()).hexdigest() != by_name["geoip"].get("sha256"):
-        raise SystemExit("Error: GeoIP artifact SHA-256 mismatch.")
+if "geoip" not in by_name:
+    raise SystemExit("Error: GeoIP artifact missing from lock.")
+if not geoip_path.is_file():
+    raise SystemExit("Error: locked GeoIP artifact is missing.")
+if hashlib.sha256(geoip_path.read_bytes()).hexdigest() != by_name["geoip"].get("sha256"):
+    raise SystemExit("Error: GeoIP artifact SHA-256 mismatch.")
 PY
 }
 

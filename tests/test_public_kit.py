@@ -466,6 +466,42 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("iptables -A OUTPUT -o tun+ -j ACCEPT", vpn_compose)
         self.assertIn("iptables -A OUTPUT -o lo -j ACCEPT", vpn_compose)
         self.assertIn("127.0.0.11", vpn_compose)
+        # Fail-closed check when iptables is missing
+        self.assertIn("command -v iptables", vpn_compose)
+        self.assertIn("Error: iptables is required", vpn_compose)
+        # Dynamic upstream proxy resolution from config.yaml
+        self.assertIn("server:", vpn_compose)
+        self.assertIn("ip route show default", vpn_compose)
+
+    def test_source_iso_verification_fail_closed(self) -> None:
+        sh_text = (ROOT / "build-autoinstall-iso.sh").read_text(encoding="utf-8")
+        self.assertIn("Error: could not determine expected SHA-256 for $ISO_NAME", sh_text)
+        self.assertIn("exit 1", sh_text)
+
+        ps1_text = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
+        self.assertIn("could not determine expected SHA-256 for $IsoName", ps1_text)
+        self.assertIn("exit 1", ps1_text)
+
+    def test_offline_refresh_never_configures_local_apt(self) -> None:
+        sh_text = (ROOT / "build-autoinstall-iso.sh").read_text(encoding="utf-8")
+        self.assertIn("samovar-offline.list", sh_text)
+        self.assertIn("file:/work/${OFFLINE_BUNDLE_CACHE}/repository", sh_text)
+
+        ps1_text = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
+        self.assertIn("samovar-offline.list", ps1_text)
+        self.assertIn("file:/work/${OFFLINE_BUNDLE_CACHE}/repository", ps1_text)
+
+    def test_powershell_build_includes_geoip(self) -> None:
+        ps1_text = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
+        self.assertIn("geoip.metadb", ps1_text)
+        self.assertIn("geoip.metadb.sha256", ps1_text)
+        self.assertIn('"geoip"', ps1_text)
+        self.assertIn("/samovar-offline-artifacts/geoip.metadb", ps1_text)
+
+    def test_packages_seeds_includes_required_build_tools(self) -> None:
+        seeds = (ROOT / "offline" / "packages.seeds.json").read_text(encoding="utf-8")
+        self.assertIn('"xorriso"', seeds)
+        self.assertIn('"python3-jsonschema"', seeds)
 
 
 if __name__ == "__main__":

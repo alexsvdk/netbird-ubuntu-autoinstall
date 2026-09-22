@@ -265,23 +265,23 @@ class TestValidateConfigFileSecretRedaction(unittest.TestCase):
 
 
 class TestValidateConfigFileRealSignature(unittest.TestCase):
-    """End-to-end tests using real ssh-keygen and the committed samovar config & signature."""
+    """End-to-end tests using real ssh-keygen and committed test fixtures."""
 
-    REAL_SIGNER = (
-        'alex@samovar namespaces="samovar-recovery" '
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILS64jfH6rfVS9J88BHRKv231PMvsRDRRSDjLRAh3FSj"
-    )
+    FIXTURES_DIR = ROOT / "tests" / "fixtures"
+    FIXTURE_CFG = FIXTURES_DIR / "samovar-config.json"
+    FIXTURE_SIG = FIXTURES_DIR / "samovar-config.json.sig"
+    REAL_SIGNER = (FIXTURES_DIR / "test_allowed_signers").read_text(encoding="utf-8").strip()
 
     def test_real_samovar_config_and_signature_pass(self) -> None:
-        cfg = str(ROOT / "samovar-config.json")
-        sig = str(ROOT / "samovar-config.json.sig")
+        cfg = str(self.FIXTURE_CFG)
+        sig = str(self.FIXTURE_SIG)
         result = validate_config_file(cfg, sig, self.REAL_SIGNER)
         self.assertTrue(result.ok, f"Validation failed: {result.errors}")
         self.assertEqual(result.errors, [])
 
     def test_real_samovar_config_fails_with_unauthorized_signer(self) -> None:
-        cfg = str(ROOT / "samovar-config.json")
-        sig = str(ROOT / "samovar-config.json.sig")
+        cfg = str(self.FIXTURE_CFG)
+        sig = str(self.FIXTURE_SIG)
         unauthorized = (
             'unauthorized@attacker namespaces="samovar-recovery" '
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFAKEKEYFAKEKEYFAKEKEYFAKEKEY"
@@ -294,10 +294,10 @@ class TestValidateConfigFileRealSignature(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             cfg = Path(td) / "samovar-config.json"
             sig = Path(td) / "samovar-config.json.sig"
-            data = json.loads((ROOT / "samovar-config.json").read_text(encoding="utf-8"))
+            data = json.loads(self.FIXTURE_CFG.read_text(encoding="utf-8"))
             data["generation"] += 1
             cfg.write_text(json.dumps(data), encoding="utf-8")
-            sig.write_bytes((ROOT / "samovar-config.json.sig").read_bytes())
+            sig.write_bytes(self.FIXTURE_SIG.read_bytes())
 
             result = validate_config_file(str(cfg), str(sig), self.REAL_SIGNER)
             self.assertFalse(result.ok)

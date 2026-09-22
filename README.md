@@ -215,7 +215,8 @@ MIT — see [LICENSE](LICENSE). Security notes: [SECURITY.md](SECURITY.md).
 
 ## Important
 
-The installer intentionally erases the **largest internal disk**. The generated ISO includes the NetBird setup key, so treat the ISO and any generated `autoinstall.yaml` as **secrets** and rebuild with a new key if they have been copied or exposed.
+- **Generic installation mode**: The installer intentionally wipes the **largest internal disk**. The generated ISO contains the plaintext NetBird setup key in `autoinstall.yaml`, so treat the ISO as a **secret** and revoke/rebuild the key if exposed.
+- **Samovar installation mode**: Disks are partitioned strictly by their verified hardware serial numbers (`50026B7683695BFE`, `TD2023102401304`, `WCC3F1336131`); the installer aborts before wiping if disks do not match. No NetBird setup key is embedded in the ISO; provisioning credentials are authenticated and loaded exclusively from a signed `samovar-config.json` via SSH Ed25519 signature.
 
 Automatic power-on after a power outage is a BIOS/UEFI setting, commonly named:
 

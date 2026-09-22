@@ -508,7 +508,8 @@ if [[ -n "$EXPECTED_ISO_SHA256" ]]; then
   elif command -v shasum >/dev/null 2>&1; then
     ACTUAL_ISO_SHA256="$(shasum -a 256 "$WORK_DIR/$ISO_NAME" | awk '{print $1}')"
   else
-    ACTUAL_ISO_SHA256=""
+    echo "Error: neither sha256sum nor shasum is available to verify source ISO SHA-256!" >&2
+    exit 1
   fi
 
   if [[ -n "$ACTUAL_ISO_SHA256" ]]; then
@@ -521,9 +522,13 @@ if [[ -n "$EXPECTED_ISO_SHA256" ]]; then
       exit 1
     fi
     echo "Source ISO SHA-256 verified: $actual_lower"
+  else
+    echo "Error: failed to compute SHA-256 for $WORK_DIR/$ISO_NAME!" >&2
+    exit 1
   fi
 else
-  echo "Warning: could not determine expected SHA-256 for $ISO_NAME; skipping source verification." >&2
+  echo "Error: could not determine expected SHA-256 for $ISO_NAME (set UBUNTU_ISO_SHA256 to override)." >&2
+  exit 1
 fi
 
 UBUNTU_ISO_SHA256="${UBUNTU_ISO_SHA256:-}"
@@ -593,6 +598,8 @@ docker run --rm \
       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
     else
       if ! command -v python3 >/dev/null 2>&1; then
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+        echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null
       fi
@@ -635,9 +642,15 @@ docker run --rm \
   -e SSH_PUBLIC_KEYS="${SSH_PUBLIC_KEYS:-$SSH_PUBLIC_KEY}" \
   -e SUDO_NOPASSWD="${SUDO_NOPASSWD:-true}" \
   -e UBUNTU_ISO_SHA256="$UBUNTU_ISO_SHA256" \
+  -e OFFLINE_BUNDLE_CACHE="$OFFLINE_BUNDLE_CACHE" \
+  -e OFFLINE_BUNDLE_REFRESH="$OFFLINE_BUNDLE_REFRESH" \
   -v "$DOCKER_WORK_DIR:/work" \
   -w /work \
   ubuntu:24.04 bash -euc '
+    if [ "${OFFLINE_BUNDLE_REFRESH:-auto}" = "never" ]; then
+      rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+      echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
+    fi
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema openssh-client >/dev/null
 
@@ -663,10 +676,15 @@ docker run --rm \
   -e NOTIFY_TOPIC="$NOTIFY_TOPIC" \
   -e MIHOMO_IMAGE="$MIHOMO_IMAGE" \
   -e OFFLINE_BUNDLE_CACHE="$OFFLINE_BUNDLE_CACHE" \
+  -e OFFLINE_BUNDLE_REFRESH="$OFFLINE_BUNDLE_REFRESH" \
   -e OFFLINE_ARTIFACT_CACHE="$OFFLINE_ARTIFACT_CACHE" \
   -v "$DOCKER_WORK_DIR:/work" \
   "${DOCKER_OUTPUT_MOUNT[@]}" \
   ubuntu:24.04 bash -euc '
+    if [ "${OFFLINE_BUNDLE_REFRESH:-auto}" = "never" ]; then
+      rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+      echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
+    fi
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xorriso python3 python3-yaml >/dev/null
 
@@ -717,12 +735,18 @@ docker run --rm \
       -find /autoinstall.yaml -exec report_lba -- \
       >/dev/null
 
+    geoip_extract_args=()
+    if [ -f "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb.sha256" ]; then
+      geoip_extract_args+=(-extract /samovar-offline-artifacts/geoip.metadb.sha256 /tmp/iso-build/geoip.metadb.sha256)
+    fi
+
     xorriso \
       -osirrox on \
       -indev "$OUTPUT_ISO_PATH" \
       -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
       -extract /samovar-offline-apt/dists/samovar/InRelease /tmp/iso-build/offline-InRelease \
       -extract /samovar-offline-artifacts/mihomo-image.tar.sha256 /tmp/iso-build/mihomo-image.tar.sha256 \
+      "${geoip_extract_args[@]}" \
       -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
       -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
       >/dev/null 2>&1

@@ -499,7 +499,8 @@ if (-not [string]::IsNullOrWhiteSpace($expectedIsoSha256)) {
     }
     Write-Host "Source ISO SHA-256 verified: $actualIsoSha256"
 } else {
-    Write-Warning "Could not determine expected SHA-256 for $IsoName; skipping source verification."
+    Write-Error "Error: could not determine expected SHA-256 for $IsoName (set UBUNTU_ISO_SHA256 to override)."
+    exit 1
 }
 
 $UbuntuIsoSha256 = if ($env:UBUNTU_ISO_SHA256) { $env:UBUNTU_ISO_SHA256 } else { $expectedIsoSha256 }
@@ -567,6 +568,8 @@ if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
 else
     if ! command -v python3 >/dev/null 2>&1; then
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+        echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null
     fi
@@ -592,17 +595,30 @@ bash /work/offline/build-apt-bundle.sh \
         $artifactCachePath = Join-Path $WorkDir $OfflineArtifactCache
         $artifactTar = Join-Path $artifactCachePath "mihomo-image.tar"
         $artifactSha = Join-Path $artifactCachePath "mihomo-image.tar.sha256"
+        $geoipFile = Join-Path $artifactCachePath "geoip.metadb"
+        $geoipSha = Join-Path $artifactCachePath "geoip.metadb.sha256"
         $artifactLock = Join-Path $WorkDir "offline\images.lock.json"
+        $geoipUrl = "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb"
         Write-Host "Offline artifacts: refresh=$OfflineArtifactRefresh"
         Write-Host "                   cache=$OfflineArtifactCache"
         if ($OfflineArtifactRefresh -eq "never") {
-            if (-not (Test-Path $artifactTar) -or -not (Test-Path $artifactLock)) {
-                Write-Error "Offline Mihomo artifact cache is missing; rerun with OFFLINE_ARTIFACT_REFRESH=auto."
+            if (-not (Test-Path $artifactTar) -or -not (Test-Path $geoipFile) -or -not (Test-Path $artifactLock)) {
+                Write-Error "Offline Mihomo/GeoIP artifact cache is missing; rerun with OFFLINE_ARTIFACT_REFRESH=auto."
                 exit 1
             }
-            $lockedArtifact = (Get-Content -Raw $artifactLock | ConvertFrom-Json).artifacts | Select-Object -First 1
-            if (-not $lockedArtifact -or $lockedArtifact.sha256 -ne (Get-FileHash -Algorithm SHA256 $artifactTar).Hash.ToLower()) {
+            $lockData = Get-Content -Raw $artifactLock | ConvertFrom-Json
+            if ($lockData.schema -ne 2 -or $lockData.state -ne "locked") {
+                Write-Error "Offline artifact lock is not in locked state; rerun with OFFLINE_ARTIFACT_REFRESH=auto."
+                exit 1
+            }
+            $mihomoLocked = $lockData.artifacts | Where-Object { $_.name -eq "mihomo" }
+            $geoipLocked = $lockData.artifacts | Where-Object { $_.name -eq "geoip" }
+            if (-not $mihomoLocked -or $mihomoLocked.sha256 -ne (Get-FileHash -Algorithm SHA256 $artifactTar).Hash.ToLower()) {
                 Write-Error "Offline Mihomo artifact cache does not match its lock."
+                exit 1
+            }
+            if (-not $geoipLocked -or $geoipLocked.sha256 -ne (Get-FileHash -Algorithm SHA256 $geoipFile).Hash.ToLower()) {
+                Write-Error "Offline GeoIP artifact cache does not match its lock."
                 exit 1
             }
         } else {
@@ -613,22 +629,43 @@ bash /work/offline/build-apt-bundle.sh \
             if ($mihomoDigest -notmatch '@sha256:') { Write-Error "Docker did not report an immutable Mihomo digest."; exit 1 }
             & docker save --output $artifactTar $mihomoDigest
             if ($LASTEXITCODE -ne 0) { Write-Error "Failed to save Mihomo image."; exit 1 }
-            $mihomoSha = (Get-FileHash -Algorithm SHA256 $artifactTar).Hash.ToLower()
-            [System.IO.File]::WriteAllText($artifactSha, "$mihomoSha  mihomo-image.tar`n", $Utf8NoBom)
+            $mihomoSha256 = (Get-FileHash -Algorithm SHA256 $artifactTar).Hash.ToLower()
+            [System.IO.File]::WriteAllText($artifactSha, "$mihomoSha256  mihomo-image.tar`n", $Utf8NoBom)
+
+            Write-Host "Fetching Mihomo GeoIP database..."
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -fsSL --connect-timeout 10 --max-time 120 --retry 3 -o $geoipFile $geoipUrl
+                if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download GeoIP database."; exit 1 }
+            } else {
+                Invoke-WebRequest -Uri $geoipUrl -OutFile $geoipFile -UseBasicParsing
+            }
+            $geoipSha256 = (Get-FileHash -Algorithm SHA256 $geoipFile).Hash.ToLower()
+            [System.IO.File]::WriteAllText($geoipSha, "$geoipSha256  geoip.metadb`n", $Utf8NoBom)
+
             $artifactManifest = [ordered]@{
                 schema = 2
                 state = "locked"
                 generated_at = [DateTime]::UtcNow.ToString("o")
-                artifacts = @([ordered]@{
-                    name = "mihomo"
-                    type = "oci-image"
-                    image = $MihomoImage
-                    digest = $mihomoDigest
-                    platform = "linux/amd64"
-                    filename = "mihomo-image.tar"
-                    sha256 = $mihomoSha
-                    target_path = "/var/lib/samovar-offline-artifacts/mihomo-image.tar"
-                })
+                artifacts = @(
+                    [ordered]@{
+                        name = "mihomo"
+                        type = "oci-image"
+                        image = $MihomoImage
+                        digest = $mihomoDigest
+                        platform = "linux/amd64"
+                        filename = "mihomo-image.tar"
+                        sha256 = $mihomoSha256
+                        target_path = "/var/lib/samovar-offline-artifacts/mihomo-image.tar"
+                    },
+                    [ordered]@{
+                        name = "geoip"
+                        type = "data-file"
+                        url = $geoipUrl
+                        filename = "geoip.metadb"
+                        sha256 = $geoipSha256
+                        target_path = "/var/lib/samovar-offline-artifacts/geoip.metadb"
+                    }
+                )
             }
             [System.IO.File]::WriteAllText($artifactLock, ($artifactManifest | ConvertTo-Json -Depth 5) + "`n", $Utf8NoBom)
         }
@@ -639,6 +676,10 @@ bash /work/offline/build-apt-bundle.sh \
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${OFFLINE_BUNDLE_REFRESH:-auto}" = "never" ]; then
+  rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+  echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
+fi
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema openssh-client >/dev/null
 
@@ -677,6 +718,8 @@ trap - EXIT
       -e "SSH_PUBLIC_KEYS=$SshPublicKeys" `
       -e "SUDO_NOPASSWD=$SudoNoPasswd" `
       -e "UBUNTU_ISO_SHA256=$UbuntuIsoSha256" `
+      -e "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache" `
+      -e "OFFLINE_BUNDLE_REFRESH=$OfflineBundleRefresh" `
       -v "${DockerWorkDir}:/work" `
       -w /work `
       ubuntu:24.04 bash /work/.autoinstall-step1.tmp.sh
@@ -697,6 +740,10 @@ trap - EXIT
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${OFFLINE_BUNDLE_REFRESH:-auto}" = "never" ]; then
+  rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+  echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
+fi
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xorriso python3 python3-yaml >/dev/null
 
@@ -747,12 +794,18 @@ xorriso \
   -find /autoinstall.yaml -exec report_lba -- \
   >/dev/null
 
+geoip_extract_args=()
+if [ -f "/work/$OFFLINE_ARTIFACT_CACHE/geoip.metadb.sha256" ]; then
+  geoip_extract_args+=(-extract /samovar-offline-artifacts/geoip.metadb.sha256 /tmp/iso-build/geoip.metadb.sha256)
+fi
+
 xorriso \
   -osirrox on \
   -indev "$OUTPUT_ISO_PATH" \
   -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
     -extract /samovar-offline-apt/dists/samovar/InRelease /tmp/iso-build/offline-InRelease \
     -extract /samovar-offline-artifacts/mihomo-image.tar.sha256 /tmp/iso-build/mihomo-image.tar.sha256 \
+    "${geoip_extract_args[@]}" \
   -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
   -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
   >/dev/null 2>&1
@@ -772,8 +825,9 @@ python3 /work/validate-autoinstall-iso.py \
       "-e", "NETWORK_INTERFACE=$NetworkInterface",
       "-e", "NOTIFY_TOPIC=$NotifyTopic",
       "-e", "MIHOMO_IMAGE=$MihomoImage",
-    "-e", "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache",
-    "-e", "OFFLINE_ARTIFACT_CACHE=$OfflineArtifactCache",
+      "-e", "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache",
+      "-e", "OFFLINE_BUNDLE_REFRESH=$OfflineBundleRefresh",
+      "-e", "OFFLINE_ARTIFACT_CACHE=$OfflineArtifactCache",
       "-v", "${DockerWorkDir}:/work",
       "-w", "/work"
     )

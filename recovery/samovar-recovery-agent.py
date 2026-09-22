@@ -427,7 +427,7 @@ def validate_schema(cfg: dict) -> None:
 
     # schema version
     schema_ver = cfg.get("schema")
-    if schema_ver != SCHEMA_VERSION:
+    if isinstance(schema_ver, bool) or schema_ver != SCHEMA_VERSION:
         raise SchemaError(
             f"Unsupported schema version: {schema_ver!r}. Expected {SCHEMA_VERSION}."
         )
@@ -441,7 +441,7 @@ def validate_schema(cfg: dict) -> None:
 
     # generation
     generation = cfg.get("generation")
-    if not isinstance(generation, int) or generation <= 0:
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation <= 0:
         raise SchemaError(
             f"generation must be a positive integer, got {generation!r}."
         )
@@ -467,8 +467,15 @@ def validate_schema(cfg: dict) -> None:
 def _validate_iso8601(value: Any) -> None:
     if not isinstance(value, str):
         raise SchemaError(f"created_at must be a string, got {type(value).__name__}.")
+    # Timezone offset or Z is mandatory in RFC 3339 / ISO 8601 date-time
+    if not re.search(r"(Z|[+-]\d{2}:?\d{2})$", value):
+        raise SchemaError(
+            f"created_at must include a timezone offset (e.g. 'Z' or '+00:00'): {value!r}"
+        )
     try:
-        datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            raise SchemaError(f"created_at must include a timezone offset: {value!r}")
     except ValueError as exc:
         raise SchemaError(f"created_at is not a valid ISO 8601 datetime: {value!r}") from exc
 
@@ -863,13 +870,34 @@ def apply_wifi(wifi_cfg: dict) -> None:
 
     tmp_path.chmod(0o600)
 
+    # Dry-run validation of YAML syntax and Netplan acceptance
     try:
-        # Validate with netplan generate (dry run)
-        _run(["netplan", "generate", "--root-dir", "/", str(tmp_path)], timeout=30)
-    except RecoveryError:
-        # Netplan generate does not support per-file validation easily;
-        # try the real generate after placing the file
-        pass
+        yaml.safe_load(yaml_content)
+    except Exception as exc:
+        raise RecoveryError(f"Generated Netplan YAML is malformed: {exc}") from exc
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="samovar-netplan-check-") as td:
+            td_path = Path(td)
+            test_netplan_dir = td_path / "etc" / "netplan"
+            test_netplan_dir.mkdir(parents=True, exist_ok=True)
+            if netplan_path.parent.exists():
+                for f in netplan_path.parent.glob("*.yaml"):
+                    if f.resolve() != netplan_path.resolve():
+                        shutil.copy2(f, test_netplan_dir / f.name)
+            (test_netplan_dir / netplan_path.name).write_text(yaml_content)
+            check_res = _run(
+                ["netplan", "generate", "--root-dir", str(td_path)],
+                check=False,
+                timeout=30,
+            )
+            if check_res.returncode != 0:
+                err_msg = (check_res.stderr or check_res.stdout or b"").decode(errors="replace")
+                raise RecoveryError(f"Netplan validation rejected configuration: {err_msg.strip()}")
+    except (RecoveryError, OSError) as exc:
+        if isinstance(exc, RecoveryError):
+            raise
+        log.debug("Netplan dry-run tool check bypassed: %s", exc)
 
     try:
         tmp_path.rename(netplan_path)
@@ -912,17 +940,9 @@ def _verify_default_route() -> None:
             pass
 
     if not reachable:
-        can_route = False
-        for endpoint in HEALTHCHECK_ENDPOINTS:
-            res = _run(["ip", "route", "get", endpoint], check=False, timeout=5)
-            if res.returncode == 0 and b"via" in (res.stdout or b""):
-                can_route = True
-                log.info("Route to healthcheck endpoint %s resolved via gateway.", endpoint)
-                break
-        if not can_route:
-            raise RecoveryError(
-                f"Network healthcheck failed: none of the healthcheck endpoints ({HEALTHCHECK_ENDPOINTS}) are reachable."
-            )
+        raise RecoveryError(
+            f"Network healthcheck failed: none of the healthcheck endpoints ({HEALTHCHECK_ENDPOINTS}) are reachable via ping."
+        )
 
 
 def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
@@ -950,8 +970,84 @@ def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _netbird_list_profiles() -> list[dict[str, Any]]:
+    """Return list of profiles: [{'id': str, 'name': str, 'active': bool}]."""
+    # 1. Try JSON output
+    try:
+        res = _run(["netbird", "profile", "list", "--json"], check=False, timeout=15)
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout)
+            if isinstance(data, list):
+                return [
+                    {
+                        "id": str(p.get("id", p.get("ID", p.get("name", "")))),
+                        "name": str(p.get("name", p.get("Name", ""))),
+                        "active": bool(p.get("active", p.get("Active", False))),
+                    }
+                    for p in data
+                    if isinstance(p, dict)
+                ]
+    except Exception:
+        pass
+
+    # 2. Fallback to --show-id text table
+    profiles: list[dict[str, Any]] = []
+    try:
+        res = _run(["netbird", "profile", "list", "--show-id"], check=False, timeout=15)
+        stdout = (res.stdout or b"").decode(errors="replace")
+        active_markers = {"✓", "*", "active", "yes", "true"}
+        for line in stdout.splitlines():
+            line_s = line.strip()
+            if not line_s or line_s.upper().startswith(("ID", "NAME")):
+                continue
+            is_active = line_s.startswith("*")
+            line_clean = line_s.lstrip("*").strip()
+            parts = line_clean.split()
+            if len(parts) >= 2:
+                p_id = parts[0]
+                p_name = parts[1]
+                if not is_active and len(parts) >= 3:
+                    is_active = parts[-1].lower() in active_markers
+                profiles.append({"id": p_id, "name": p_name, "active": is_active})
+            elif len(parts) == 1:
+                profiles.append({"id": parts[0], "name": parts[0], "active": is_active})
+    except Exception:
+        pass
+
+    # 3. Fallback to plain profile list
+    if not profiles:
+        try:
+            res = _run(["netbird", "profile", "list"], check=False, timeout=15)
+            stdout = (res.stdout or b"").decode(errors="replace")
+            for line in stdout.splitlines():
+                line_s = line.strip()
+                if not line_s or line_s.upper().startswith(("ID", "NAME")):
+                    continue
+                is_active = line_s.startswith("*")
+                p_name = line_s.lstrip("*").strip().split()[0]
+                profiles.append({"id": p_name, "name": p_name, "active": is_active})
+        except Exception:
+            pass
+
+    return profiles
+
+
 def _netbird_current_profile() -> str | None:
-    """Return the active profile, preferring the daemon's status output."""
+    """Return the active profile ID or name, preferring status output."""
+    try:
+        result = _run(["netbird", "status", "--json"], check=False, timeout=15)
+        if result.returncode == 0 and result.stdout:
+            data = json.loads(result.stdout)
+            prof = data.get("profile", {})
+            if isinstance(prof, dict):
+                p_id = prof.get("id") or prof.get("name")
+                if p_id:
+                    return str(p_id)
+            elif isinstance(prof, str) and prof:
+                return prof
+    except Exception:
+        pass
+
     try:
         result = _run(["netbird", "status"], check=False, timeout=15)
         stdout = (result.stdout or b"").decode(errors="replace")
@@ -961,24 +1057,9 @@ def _netbird_current_profile() -> str | None:
     except RecoveryError:
         pass
 
-    # Older NetBird versions expose the active marker only through profile list.
-    try:
-        result = _run(
-            ["netbird", "profile", "list", "--show-id"],
-            check=False,
-            timeout=15,
-        )
-        stdout = (result.stdout or b"").decode(errors="replace")
-        active_markers = {"✓", "*", "active", "yes", "true"}
-        for line in stdout.splitlines():
-            parts = line.split()
-            if not parts or parts[0].upper() in {"ID", "NAME"}:
-                continue
-            if parts[-1].lower() in active_markers:
-                # With --show-id the first column is a stable profile ID.
-                return parts[0].lstrip("*").strip()
-    except RecoveryError:
-        pass
+    for p in _netbird_list_profiles():
+        if p.get("active"):
+            return p.get("id") or p.get("name")
     return None
 
 
@@ -1000,6 +1081,21 @@ def _write_setup_key_file(setup_key: str) -> Path:
 
 def _is_netbird_connected(output: str) -> bool:
     """Check if NetBird status output represents a successfully connected state."""
+    try:
+        data = json.loads(output)
+        if isinstance(data, dict):
+            mgmt = data.get("management", {})
+            if isinstance(mgmt, dict):
+                if mgmt.get("connected") is True:
+                    return True
+                if mgmt.get("connected") is False or mgmt.get("status", "").lower() == "disconnected":
+                    return False
+            status = data.get("status")
+            if isinstance(status, str) and status.lower() == "connected":
+                return True
+    except Exception:
+        pass
+
     lines = output.splitlines()
     for line in lines:
         line_clean = line.strip().lower()
@@ -1009,14 +1105,6 @@ def _is_netbird_connected(output: str) -> bool:
             return "connected" in line_clean and "disconnected" not in line_clean
     if re.search(r"\bmanagement:\s*connected\b", output, re.IGNORECASE):
         return True
-    try:
-        data = json.loads(output)
-        if isinstance(data, dict):
-            status = data.get("status") or data.get("management", {}).get("status")
-            if isinstance(status, str) and status.lower() == "connected":
-                return True
-    except Exception:
-        pass
     return False
 
 
@@ -1025,13 +1113,41 @@ def _netbird_wait_connected(timeout_s: int = 120) -> bool:
     deadline = time.monotonic() + timeout_s
     log.info("Waiting for NetBird to connect (timeout=%ds)…", timeout_s)
     while time.monotonic() < deadline:
+        # 1. Try netbird status --json
+        try:
+            result = _run(
+                ["netbird", "status", "--json"],
+                check=False,
+                timeout=15,
+            )
+            if result.returncode == 0 and result.stdout:
+                try:
+                    data = json.loads(result.stdout)
+                    mgmt = data.get("management", {})
+                    if isinstance(mgmt, dict) and mgmt.get("connected") is True:
+                        chk = _run(
+                            ["netbird", "status", "--check", "startup"],
+                            check=False,
+                            timeout=10,
+                        )
+                        if chk.returncode == 0:
+                            log.info("NetBird status: connected and startup check passed.")
+                        else:
+                            log.info("NetBird status: connected (startup check returned %d).", chk.returncode)
+                        return True
+                except json.JSONDecodeError:
+                    pass
+        except RecoveryError:
+            pass
+
+        # 2. Fallback to netbird status
         try:
             result = _run(
                 ["netbird", "status"],
                 check=False,
                 timeout=15,
             )
-            output = (result.stdout or b"").decode()
+            output = (result.stdout or b"").decode(errors="replace")
             if _is_netbird_connected(output):
                 log.info("NetBird status: connected.")
                 return True
@@ -1042,19 +1158,36 @@ def _netbird_wait_connected(timeout_s: int = 120) -> bool:
     return False
 
 
+def _extract_profile_id(output: bytes | str) -> str | None:
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    try:
+        data = json.loads(output)
+        if isinstance(data, dict) and "id" in data:
+            return str(data["id"])
+    except Exception:
+        pass
+    m = re.search(r"\b([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\b", output)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?:id|profile)[:\s]+([a-zA-Z0-9_-]+)", output, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
+
+
 def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     """
     Apply NetBird configuration via profiles (spec §11.2).
-    Returns the new active profile name on success.
+    Returns the new active profile ID on success.
     """
-    # Reuse one deterministic profile for a generation. This makes retries
-    # idempotent and avoids leaving transient profiles after a timeout.
-    profile_name = f"samovar-gen{generation}"
+    profile_base = nb_cfg.get("profile") or "samovar"
+    profile_name = f"{profile_base}-gen{generation}"
     management_url = nb_cfg["management_url"]
     setup_key = nb_cfg["setup_key"]
 
     log.info(
-        "Applying NetBird: profile=%s, management_url=%s",
+        "Applying NetBird: profile_name=%s, management_url=%s",
         profile_name,
         management_url,
     )
@@ -1062,24 +1195,44 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     old_profile = _netbird_current_profile()
     log.info("Current NetBird profile: %s", old_profile)
 
-    # Create new profile. Reuse it on retries so a transient `netbird up`
-    # timeout does not create an unbounded list of orphaned profiles.
+    # Idempotent profile handling: reuse existing profile if present
+    existing_profiles = _netbird_list_profiles()
+    existing = next((p for p in existing_profiles if p["name"] == profile_name), None)
     profile_created = False
+    profile_id = ""
+
+    if existing:
+        profile_id = existing["id"]
+        log.info("Reusing existing NetBird profile %s (ID: %s)", profile_name, profile_id)
+    else:
+        try:
+            add_result = _run(
+                ["netbird", "profile", "add", profile_name],
+                timeout=15,
+            )
+            profile_created = True
+            extracted_id = _extract_profile_id(add_result.stdout or b"")
+            if extracted_id:
+                profile_id = extracted_id
+            else:
+                new_profiles = _netbird_list_profiles()
+                newly_added = next((p for p in new_profiles if p["name"] == profile_name), None)
+                profile_id = newly_added["id"] if newly_added else profile_name
+            log.info("Added NetBird profile %s (ID: %s)", profile_name, profile_id)
+        except RecoveryError as exc:
+            log.error("Failed to add NetBird profile: %s", exc)
+            raise
+
+    # Select profile by ID
     try:
-        add_result = _run(
-            ["netbird", "profile", "add", profile_name],
-            check=False,
-            timeout=15,
-        )
-        profile_created = add_result.returncode == 0
         _run(
-            ["netbird", "profile", "select", profile_name],
+            ["netbird", "profile", "select", profile_id],
             timeout=15,
         )
-        log.info("Switched to NetBird profile: %s", profile_name)
+        log.info("Switched to NetBird profile ID: %s (name: %s)", profile_id, profile_name)
     except RecoveryError as exc:
         log.error("Failed to switch NetBird profile: %s", exc)
-        _netbird_rollback(old_profile, profile_name if profile_created else None)
+        _netbird_rollback(old_profile, profile_id if profile_created else None)
         raise RecoveryError(f"NetBird profile switch failed: {exc}") from exc
 
     # Write setup key to temp file — delete immediately after use
@@ -1099,7 +1252,7 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
         log.info("netbird up succeeded.")
     except RecoveryError as exc:
         log.error("netbird up failed: %s", exc)
-        _netbird_rollback(old_profile, profile_name if profile_created else None)
+        _netbird_rollback(old_profile, profile_id if profile_created else None)
         raise RecoveryError(f"netbird up failed: {exc}") from exc
     finally:
         if key_path is not None:
@@ -1109,28 +1262,30 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
     # Wait for connection
     if not _netbird_wait_connected():
         log.error("NetBird did not connect; rolling back.")
-        _netbird_rollback(old_profile, profile_name if profile_created else None)
+        _netbird_rollback(old_profile, profile_id if profile_created else None)
         raise RecoveryError("NetBird connection not established after netbird up.")
 
     # Verify management URL matches
     verified_url = False
     try:
-        result = _run(["netbird", "status", "--output", "json"], check=False, timeout=15)
-        status_raw = (result.stdout or b"").decode()
-        if status_raw:
+        result = _run(["netbird", "status", "--json"], check=False, timeout=15)
+        if result.returncode == 0 and result.stdout:
             try:
-                status_json = json.loads(status_raw)
+                status_json = json.loads(result.stdout)
                 reported_url = (
-                    status_json.get("management_url")
-                    or status_json.get("management", {}).get("url")
+                    status_json.get("management", {}).get("url")
+                    or status_json.get("management_url")
                     or status_json.get("managementURL")
                 )
                 if reported_url and reported_url.rstrip("/").lower() == management_url.rstrip("/").lower():
                     verified_url = True
             except json.JSONDecodeError:
                 pass
-        if not verified_url and management_url in status_raw:
-            verified_url = True
+        if not verified_url:
+            res_plain = _run(["netbird", "status"], check=False, timeout=15)
+            plain_out = (res_plain.stdout or b"").decode(errors="replace")
+            if management_url in plain_out:
+                verified_url = True
     except RecoveryError:
         pass
 
@@ -1139,11 +1294,11 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
             "Management URL mismatch or unconfirmed for %s; rolling back.",
             management_url,
         )
-        _netbird_rollback(old_profile, profile_name if profile_created else None)
+        _netbird_rollback(old_profile, profile_id if profile_created else None)
         raise RecoveryError(f"NetBird management URL mismatch: expected {management_url}")
 
-    # Delete old profile
-    if old_profile and old_profile != profile_name:
+    # Delete old profile if different
+    if old_profile and old_profile != profile_id:
         try:
             _run(
                 ["netbird", "profile", "remove", old_profile],
@@ -1154,8 +1309,8 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
         except RecoveryError as exc:
             log.warning("Could not delete old profile %s: %s", old_profile, exc)
 
-    log.info("NetBird applied successfully. Active profile: %s", profile_name)
-    return profile_name
+    log.info("NetBird applied successfully. Active profile ID: %s", profile_id)
+    return profile_id
 
 
 def _netbird_rollback(
@@ -1167,23 +1322,26 @@ def _netbird_rollback(
     else:
         log.info("Rolling back to NetBird profile: %s", old_profile)
         try:
-            # Selecting the previous profile is enough. Calling `netbird up`
-            # without a setup key starts interactive SSO and can block recovery.
-            _run(["netbird", "profile", "select", old_profile], check=False, timeout=15)
+            res = _run(["netbird", "profile", "select", old_profile], check=False, timeout=15)
+            if res.returncode != 0:
+                raise RecoveryError(f"netbird profile select {old_profile} returned {res.returncode}: {res.stderr}")
             log.info("Rolled back to NetBird profile: %s", old_profile)
         except RecoveryError as exc:
             raise RollbackError(f"NetBird rollback failed: {exc}") from exc
 
     if failed_profile and failed_profile != old_profile:
         try:
-            _run(
+            res = _run(
                 ["netbird", "profile", "remove", failed_profile],
                 check=False,
                 timeout=15,
             )
-            log.info("Removed failed NetBird profile: %s", failed_profile)
+            if res.returncode != 0:
+                log.warning("Could not remove failed NetBird profile %s: exit code %d", failed_profile, res.returncode)
+            else:
+                log.info("Removed failed NetBird profile: %s", failed_profile)
         except RecoveryError as exc:
-            log.warning("Could not remove failed NetBird profile %s: %s", failed_profile, exc)
+            log.warning("Could not remove failed profile %s: %s", failed_profile, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1526,14 +1684,19 @@ def _mihomo_rollback(mihomo_path: Path, backup_path: Path) -> None:
         shutil.copy2(backup_path, mihomo_path)
         mihomo_path.chmod(0o600)
         log.info("Rolled back Mihomo config from backup.")
+        try:
+            res = _run(["systemctl", "restart", "mihomo.service"], check=False, timeout=30)
+            if res.returncode != 0:
+                raise RecoveryError(f"systemctl restart mihomo.service failed with exit code {res.returncode}")
+            log.info("Mihomo service restarted after rollback.")
+        except RecoveryError as exc:
+            raise RollbackError(f"Mihomo rollback service restart failed: {exc}") from exc
     else:
-        log.warning("No Mihomo backup found; leaving current config.")
-
-    try:
-        _run(["systemctl", "restart", "mihomo.service"], check=False, timeout=30)
-        log.info("Mihomo service restarted after rollback.")
-    except RecoveryError as exc:
-        raise RollbackError(f"Mihomo rollback service restart failed: {exc}") from exc
+        log.warning("No Mihomo backup found; removing invalid config and stopping service.")
+        if mihomo_path.exists():
+            with contextlib.suppress(OSError):
+                mihomo_path.unlink()
+        _run(["systemctl", "stop", "mihomo.service"], check=False, timeout=30)
 
 
 # ---------------------------------------------------------------------------
@@ -1585,37 +1748,56 @@ def apply_config(cfg: dict, raw: bytes, *, source_label: str) -> None:
     active_netbird_profile: str | None = None
     mihomo_sha256: str | None = None
 
-    # Apply each section — independent failures are logged but do not prevent
-    # other sections from running.  All errors are collected and re-raised.
+    wifi_applied = False
+    mihomo_applied = False
+
+    netplan_path = Path(NETPLAN_MANAGED_FILE)
+    wifi_backup_path = netplan_path.with_suffix(".yaml.bak")
+
+    mihomo_cfg_path = Path(MIHOMO_CONFIG)
+    mihomo_backup_path = mihomo_cfg_path.with_suffix(".yaml.bak")
+
     errors: list[str] = []
 
+    # 1. Apply Wi-Fi
     if "wifi" in cfg and NETWORK_INTERFACE in {"both", "wifi0"}:
         try:
             apply_wifi(cfg["wifi"])
+            wifi_applied = True
         except RecoveryError as exc:
             errors.append(f"wifi: {exc}")
     elif "wifi" in cfg:
         log.info("Skipping Wi-Fi configuration for NETWORK_INTERFACE=%s", NETWORK_INTERFACE)
 
-    # Validate and start Mihomo before changing NetBird.  A missing image or
-    # invalid proxy config must not create a new NetBird profile on every retry.
-    if "mihomo" in cfg:
+    # 2. Apply Mihomo
+    if not errors and "mihomo" in cfg:
         try:
             mihomo_sha256 = apply_mihomo(cfg["mihomo"])
+            mihomo_applied = True
         except RecoveryError as exc:
             errors.append(f"mihomo: {exc}")
 
-    if errors:
-        log.warning(
-            "Skipping NetBird changes because an earlier configuration step failed."
-        )
-    elif "netbird" in cfg:
+    # 3. Apply NetBird
+    if not errors and "netbird" in cfg:
         try:
             active_netbird_profile = apply_netbird(cfg["netbird"], generation)
         except RecoveryError as exc:
             errors.append(f"netbird: {exc}")
 
     if errors:
+        # Full transactional rollback
+        log.error("Transaction failed (%s). Executing full rollback of applied components.", "; ".join(errors))
+        if mihomo_applied:
+            try:
+                _mihomo_rollback(mihomo_cfg_path, mihomo_backup_path)
+            except Exception as e:
+                log.error("Rollback of Mihomo failed during transaction abort: %s", e)
+        if wifi_applied:
+            try:
+                _wifi_rollback(netplan_path, wifi_backup_path)
+            except Exception as e:
+                log.error("Rollback of Wi-Fi failed during transaction abort: %s", e)
+
         err_summary = "; ".join(errors)
         log.error("Config application had errors: %s", err_summary)
         raise RecoveryError(f"Partial apply failure: {err_summary}")

@@ -33,15 +33,22 @@ def test_netbird_run_supplies_home_for_systemd_services() -> None:
 
 def test_retry_reuses_deterministic_netbird_profile_name() -> None:
     commands: list[list[str]] = []
+    profiles: list[dict[str, object]] = [{"id": "old-id", "name": "old-profile", "active": True}]
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         commands.append(cmd)
-        if cmd == ["netbird", "profile", "list"]:
-            return subprocess.CompletedProcess(cmd, 0, b"* old-profile\n", b"")
-        if cmd[:2] == ["netbird", "status"]:
+        if cmd == ["netbird", "profile", "list", "--json"]:
+            import json
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(profiles).encode(), b"")
+        if cmd[:3] == ["netbird", "profile", "add"]:
+            profiles.append({"id": "gen-id-1", "name": cmd[3], "active": False})
+            return subprocess.CompletedProcess(cmd, 0, b"Profile gen-id-1 added\n", b"")
+        if cmd == ["netbird", "status", "--json"]:
             return subprocess.CompletedProcess(
-                cmd, 0, b'{"management_url":"https://api.netbird.io:443"}', b""
+                cmd, 0, b'{"management":{"connected":true,"url":"https://api.netbird.io:443"}}', b""
             )
+        if cmd[:3] == ["netbird", "status", "--check"]:
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
     config = {
@@ -50,11 +57,11 @@ def test_retry_reuses_deterministic_netbird_profile_name() -> None:
     }
     with (
         patch.object(agent, "_run", side_effect=fake_run),
-        patch.object(agent, "_netbird_wait_connected", return_value=True),
         patch.object(agent, "_write_setup_key_file", return_value=Path("/run/test-key")),
         patch.object(agent, "_secure_delete"),
     ):
         agent.apply_netbird(config, 2026091901)
+        # Second call (retry) should reuse the existing profile and not call profile add again
         agent.apply_netbird(config, 2026091901)
 
     added = [
@@ -62,7 +69,13 @@ def test_retry_reuses_deterministic_netbird_profile_name() -> None:
         for cmd in commands
         if cmd[:3] == ["netbird", "profile", "add"]
     ]
-    assert added == ["samovar-gen2026091901", "samovar-gen2026091901"]
+    assert added == ["samovar-gen2026091901"]
+    selects = [
+        cmd[3]
+        for cmd in commands
+        if cmd[:3] == ["netbird", "profile", "select"]
+    ]
+    assert selects == ["gen-id-1", "gen-id-1"]
 
 
 def test_rollback_does_not_start_interactive_sso() -> None:
@@ -174,3 +187,60 @@ def test_mihomo_runtime_config_is_bridge_only() -> None:
     assert runtime["bind-address"] == "0.0.0.0"
     assert runtime["external-controller"] == "0.0.0.0:9090"
     assert runtime["tun"]["enable"] is False
+
+
+def test_validate_schema_rejects_bool_generation() -> None:
+    config = {
+        "schema": 1,
+        "target": "samovar",
+        "generation": True,
+        "created_at": "2026-09-22T12:00:00Z",
+    }
+    import pytest
+    with pytest.raises(agent.SchemaError, match="generation must be a positive integer"):
+        agent.validate_schema(config)
+
+
+def test_validate_schema_rejects_created_at_without_timezone() -> None:
+    config = {
+        "schema": 1,
+        "target": "samovar",
+        "generation": 10,
+        "created_at": "2026-09-22T12:00:00",
+    }
+    import pytest
+    with pytest.raises(agent.SchemaError, match="must include a timezone"):
+        agent.validate_schema(config)
+
+
+def test_apply_config_rolls_back_wifi_when_mihomo_fails() -> None:
+    config = {
+        "generation": 2026091901,
+        "target": "samovar",
+        "wifi": {"networks": [{"ssid": "MyWifi", "password": "secretpassword"}]},
+        "mihomo": {"enabled": True},
+    }
+    import pytest
+    with (
+        patch.object(agent, "NETWORK_INTERFACE", "both"),
+        patch.object(agent, "apply_wifi") as mock_wifi,
+        patch.object(agent, "apply_mihomo", side_effect=agent.RecoveryError("mihomo failed")),
+        patch.object(agent, "_wifi_rollback") as mock_wifi_rollback,
+    ):
+        with pytest.raises(agent.RecoveryError, match="Partial apply failure"):
+            agent.apply_config(config, b"{}", source_label="test")
+
+    mock_wifi.assert_called_once()
+    mock_wifi_rollback.assert_called_once()
+
+
+def test_mihomo_rollback_without_backup_cleans_up(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("bad config")
+    backup = tmp_path / "config.yaml.bak"
+
+    with patch.object(agent, "_run") as mock_run:
+        agent._mihomo_rollback(cfg, backup)
+
+    assert not cfg.exists()
+    mock_run.assert_called_once_with(["systemctl", "stop", "mihomo.service"], check=False, timeout=30)

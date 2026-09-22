@@ -48,3 +48,6 @@ ENV/
 /tmp/
 /iso-build/
 /work/
+
+# Test fixtures are committed and must not be ignored
+!tests/fixtures/**
