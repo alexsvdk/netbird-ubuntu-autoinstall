@@ -251,8 +251,11 @@ offline_apt_install() {
         -o "APT::Get::List-Cleanup=0"
     )
 
-    [ -s "$repository/Packages.gz" ] || return 1
-    printf 'deb [trusted=yes] file:%s ./\\n' "$repository" >"$source"
+    [ -s "$repository/dists/samovar/main/binary-amd64/Packages.gz" ] || return 1
+    [ -s "$repository/samovar-offline-archive-keyring.gpg" ] || return 1
+    [ -s "$repository/dists/samovar/InRelease" ] || return 1
+    printf 'deb [signed-by=%s/samovar-offline-archive-keyring.gpg] file:%s samovar main\\n' \
+        "$repository" "$repository" >"$source"
     apt-get "${apt_options[@]}" update
     DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y "$@"
 }
@@ -304,7 +307,7 @@ getent ahosts {default_archive_host} || true
 # avoids requiring network access on the first boot; a failed attempt is retried
 # by systemd rather than hidden in an endless shell loop.
 install_with_offline_fallback \\
-    curl ca-certificates docker.io docker-compose-v2 ufw
+    curl ca-certificates docker.io docker-compose-v2 ufw netbird
 notify "Сеть доступна, базовые пакеты установлены"
 
 install -d -m 0755 /etc/docker /etc/systemd/journald.conf.d
@@ -677,9 +680,14 @@ journalctl --vacuum-size=90M || true
 {_offline_apt_install}
 
 install_with_offline_fallback \\
-    openssh-server wpasupplicant iw linux-firmware wireless-regdb \\
+    openssh-server openssh-client wpasupplicant iw linux-firmware wireless-regdb \\
+    netplan.io rfkill iproute2 ethtool pciutils dnsutils rsync gnupg ffmpeg lm-sensors \\
     curl ca-certificates docker.io docker-compose-v2 ufw \\
-    smartmontools btop tmux git jq
+    smartmontools btop tmux git jq unattended-upgrades \\
+    linux-image-generic linux-modules-nvidia-595-open-generic \\
+    nvidia-headless-no-dkms-595-open nvidia-utils-595 libnvidia-encode-595 \\
+    netbird libnvidia-container1 libnvidia-container-tools \\
+    nvidia-container-toolkit-base nvidia-container-toolkit
 notify "Базовые пакеты установлены"
 
 # ── Mihomo Compose runtime ────────────────────────────────────────────────────
@@ -703,14 +711,10 @@ systemctl daemon-reload
 systemctl enable mihomo.service
 
 # ── NetBird client ────────────────────────────────────────────────────────────
-# The recovery bootstrap invokes netbird, so install it before that service is
-# allowed to run. A bounded download prevents a dead network from blocking the
-# whole first-boot provisioning attempt forever; systemd retries failed attempts.
+# The recovery bootstrap invokes netbird, so verify its locally bundled package
+# before that service is allowed to run.
 notify "Началась установка NetBird"
 echo "$(date -Is) samovar-provision: installing NetBird"
-curl --fail --silent --show-error --location \\
-    --connect-timeout 15 --max-time 120 \\
-    https://pkgs.netbird.io/install.sh | sh
 command -v netbird
 notify "NetBird установлен"
 
@@ -733,6 +737,15 @@ install -d -m 0755 /archive/incoming /archive/output /archive/backups
 
 usermod -aG docker {shlex.quote(username)}
 systemctl enable --now docker.service
+OFFLINE_MIHOMO_DIR=/var/lib/samovar-offline-artifacts
+if [ -s "$OFFLINE_MIHOMO_DIR/mihomo-image.tar" ] && [ -s "$OFFLINE_MIHOMO_DIR/mihomo-image.tar.sha256" ]; then
+    (cd "$OFFLINE_MIHOMO_DIR" && sha256sum -c mihomo-image.tar.sha256)
+    docker load --input "$OFFLINE_MIHOMO_DIR/mihomo-image.tar"
+fi
+if command -v nvidia-ctk >/dev/null 2>&1; then
+    nvidia-ctk runtime configure --runtime=docker
+    systemctl restart docker.service
+fi
 
 # ── Firewall ──────────────────────────────────────────────────────────────────
 ufw default deny incoming
@@ -1157,6 +1170,8 @@ if not SAMOVAR_MODE:
             "late-commands": [
                 "mkdir -p /target/var/lib/samovar-offline-apt && "
                 "cp -a /cdrom/samovar-offline-apt/. /target/var/lib/samovar-offline-apt/",
+                "mkdir -p /target/var/lib/samovar-offline-artifacts && "
+                "cp -a /cdrom/samovar-offline-artifacts/. /target/var/lib/samovar-offline-artifacts/",
             ],
             # A reboot with the USB stick still first in the UEFI boot order starts
             # the live installer again.  Power off instead, so removing the stick
@@ -1192,6 +1207,8 @@ else:
             "late-commands": [
                 "mkdir -p /target/var/lib/samovar-offline-apt && "
                 "cp -a /cdrom/samovar-offline-apt/. /target/var/lib/samovar-offline-apt/",
+                "mkdir -p /target/var/lib/samovar-offline-artifacts && "
+                "cp -a /cdrom/samovar-offline-artifacts/. /target/var/lib/samovar-offline-artifacts/",
             ],
             "user-data": {
                 "write_files": build_write_files_samovar(),

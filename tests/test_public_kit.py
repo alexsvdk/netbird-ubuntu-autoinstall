@@ -123,8 +123,9 @@ class PublicKitTests(unittest.TestCase):
             for entry in files
             if entry["path"] == "/usr/local/sbin/samovar-provision.sh"
         )
-        self.assertIn("https://pkgs.netbird.io/install.sh | sh", provision)
+        self.assertIn("netbird libnvidia-container1", provision)
         self.assertIn("command -v netbird", provision)
+        self.assertIn("nvidia-ctk runtime configure --runtime=docker", provision)
         self.assertIn("install -d -m 0755 /etc/mihomo /var/lib/mihomo", provision)
         self.assertIn("meta-rules-dat/releases/latest/download/geoip.metadb", provision)
         self.assertNotIn("/usr/local/bin/mihomo", provision)
@@ -308,18 +309,30 @@ class PublicKitTests(unittest.TestCase):
 
     def test_offline_bundle_is_present_and_forwarded_by_build_entry_points(self) -> None:
         helper = ROOT / "offline" / "build-apt-bundle.sh"
+        artifact_helper = ROOT / "offline" / "build-oci-artifacts.sh"
         self.assertTrue(helper.is_file())
+        self.assertTrue(artifact_helper.is_file())
         syntax = subprocess.run(["bash", "-n", str(helper)], capture_output=True, text=True)
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        artifact_syntax = subprocess.run(["bash", "-n", str(artifact_helper)], capture_output=True, text=True)
+        self.assertEqual(artifact_syntax.returncode, 0, artifact_syntax.stderr)
+        seeds = (ROOT / "offline" / "packages.seeds.json").read_text(encoding="utf-8")
+        self.assertIn('"codename": "resolute"', seeds)
+        self.assertIn("linux-firmware", seeds)
+        self.assertIn("wireless-regdb", seeds)
+        self.assertIn("nvidia-container-toolkit", seeds)
         lock = (ROOT / "offline" / "packages.lock.json").read_text(encoding="utf-8")
-        self.assertIn("linux-firmware", lock)
-        self.assertIn("wireless-regdb", lock)
+        self.assertIn('"state": "ungenerated"', lock)
+        image_lock = (ROOT / "offline" / "images.lock.json").read_text(encoding="utf-8")
+        self.assertIn('"state": "ungenerated"', image_lock)
         for rel in ("build-autoinstall-iso.sh", "build-autoinstall-iso.ps1", "build-autoinstall-iso.bat"):
             text = (ROOT / rel).read_text(encoding="utf-8")
             self.assertIn("OFFLINE_BUNDLE", text, rel)
+            self.assertIn("OFFLINE_ARTIFACT", text, rel)
         shell = (ROOT / "build-autoinstall-iso.sh").read_text(encoding="utf-8")
         self.assertIn("-e OFFLINE_BUNDLE_CACHE=\"$OFFLINE_BUNDLE_CACHE\"", shell)
         self.assertIn("-e OFFLINE_BUNDLE_REFRESH=\"$OFFLINE_BUNDLE_REFRESH\"", shell)
+        self.assertIn("/samovar-offline-artifacts/mihomo-image.tar", shell)
 
     def test_build_script_bash_syntax(self) -> None:
         result = subprocess.run(

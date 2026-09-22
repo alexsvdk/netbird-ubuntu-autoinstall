@@ -3,8 +3,8 @@ setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "PS_CMD=powershell.exe"
-rem Environment settings, including NOTIFY_TOPIC, MIHOMO_IMAGE, OFFLINE_BUNDLE_REFRESH,
-rem and OFFLINE_BUNDLE_CACHE, are inherited by PowerShell.
+rem Environment settings, including NOTIFY_TOPIC, MIHOMO_IMAGE, OFFLINE_BUNDLE_*,
+rem and OFFLINE_ARTIFACT_*, are inherited by PowerShell.
 
 where pwsh.exe >nul 2>&1
 if %ERRORLEVEL% equ 0 (

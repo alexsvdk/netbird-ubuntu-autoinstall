@@ -1,31 +1,5 @@
 {
-  "images": {
-    "_comment": "Locked Docker/OCI image list for offline bootstrap.",
-    "_format": "1",
-    "registry_mirrors": [
-      {
-        "prefix": "docker.io",
-        "mirror": "mirror.yandex.ru",
-        "priority": 1
-      }
-    ],
-    "required": [
-      {
-        "name": "metacubex/mihomo",
-        "tag": "latest",
-        "digest": null,
-        "comment": "Mihomo proxy. Pin digest before production use.",
-        "arch": "amd64"
-      }
-    ],
-    "optional": [
-      {
-        "name": "nvidia/cuda",
-        "tag": "12.6.0-base-ubuntu24.04",
-        "digest": null,
-        "comment": "CUDA validation image. Pull separately - large.",
-        "arch": "amd64"
-      }
-    ]
-  }
+  "schema": 2,
+  "state": "ungenerated",
+  "artifacts": []
 }

@@ -1,6 +1,6 @@
 # NetBird Ubuntu Autoinstall
 
-Public kit that builds an **Ubuntu Server 24.04.4** ISO with **NetBird** enrollment and unattended install.
+Public kit that builds an **Ubuntu Server 26.04.1 (Resolute)** ISO with **NetBird** enrollment and unattended install.
 
 ```bash
 git clone https://github.com/alexsvdk/netbird-ubuntu-autoinstall.git
@@ -8,7 +8,7 @@ cd netbird-ubuntu-autoinstall
 cp .env.example .env   # fill secrets — never commit .env
 ```
 
-This kit builds an Ubuntu Server 24.04.4 ISO that:
+This kit builds an Ubuntu Server 26.04.1 ISO that:
 
 - erases the largest non-installation disk;
 - installs Ubuntu Server without questions;
@@ -50,7 +50,7 @@ Supported variables (see `.env.example`):
 
 | Variable | Description |
 | --- | --- |
-| `UBUNTU_VERSION` | Ubuntu live-server release (default `24.04.4`) |
+| `UBUNTU_VERSION` | Ubuntu live-server release (default `26.04.1`; Samovar offline bundle targets Resolute) |
 | `ARCH` | Target CPU architecture: `amd64` (default, x86_64) or `arm64` (aarch64). Aliases: `x86_64`/`x64`, `aarch64`/`arm` |
 | `ISO_MIRROR` | Source ISO download: `auto` (default, speed-test CD mirrors), `default` (Canonical only), base mirror URL, or full `.iso` URL |
 | `ISO_URL` | Full source ISO URL (overrides `ISO_MIRROR`) |
@@ -66,6 +66,8 @@ Supported variables (see `.env.example`):
 | `APT_FALLBACK` | If no mirror works: `offline-install` (default), `abort`, or `continue-anyway` |
 | `OFFLINE_BUNDLE_REFRESH` | Local APT bundle refresh mode: `auto` (default) updates metadata and downloads only missing/newer `.deb` files; `never` requires a complete existing cache |
 | `OFFLINE_BUNDLE_CACHE` | Project-relative persistent cache path (default `offline/packages/${UBUNTU_VERSION}-${ARCH}`) |
+| `OFFLINE_ARTIFACT_REFRESH` | OCI artifact refresh mode for Mihomo: `auto` (default) or `never` |
+| `OFFLINE_ARTIFACT_CACHE` | Project-relative persistent cache path for the verified Mihomo image tar |
 | `NOTIFY_TOPIC` | ntfy.sh topic for installation status notifications (default `samovar_test`) |
 
 Non-empty values from `.env` (or the shell, except bare `HOSTNAME`) skip the matching interactive prompt. Empty values still prompt at build time.
@@ -100,16 +102,27 @@ Official country mirrors use `http://XX.archive.ubuntu.com/ubuntu` (Launchpad mi
 
 ### Offline APT bundle
 
-Each build embeds a local flat APT repository at `/samovar-offline-apt` in the
-generated ISO. During installation it is copied to
-`/var/lib/samovar-offline-apt` on the target; first-boot provisioning installs
-its Ubuntu packages from that repository before attempting a network mirror.
+`offline/packages.seeds.json` declares the Resolute package roots, Ubuntu pockets
+(`resolute`, `resolute-updates`, `resolute-security`), components, and external
+NetBird/NVIDIA Container Toolkit APT sources. On refresh, the builder resolves
+the complete dependency closure in a clean Resolute container and writes
+`offline/packages.lock.json` with every `.deb` version, architecture, filename,
+and SHA-256.
+
+Each build embeds a signed APT repository at `/samovar-offline-apt`, including
+`dists/samovar/InRelease` and its public key. During installation it is copied to
+`/var/lib/samovar-offline-apt`; first-boot provisioning uses `signed-by` with the
+embedded key before attempting a network mirror. It never uses `trusted=yes`.
 
 The persistent cache is ignored by Git. With the default
 `OFFLINE_BUNDLE_REFRESH=auto`, the builder checks APT metadata but reuses cached
 `.deb` files and only downloads packages that are missing or have a newer
 candidate. Use `OFFLINE_BUNDLE_REFRESH=never` to build without contacting APT;
-it fails if the cache is missing or its root package lock has changed.
+it verifies all locked SHA-256 values and the signed repository layout.
+
+Mihomo is cached separately as an OCI image tar. Refresh records its immutable
+registry digest and tar SHA-256 in `offline/images.lock.json`; the target verifies
+the checksum and loads the image into Docker before the Compose service runs.
 
 ## Build
 

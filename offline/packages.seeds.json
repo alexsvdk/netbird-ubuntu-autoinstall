@@ -1,0 +1,84 @@
+{
+  "schema": 2,
+  "target": {
+    "release": "26.04",
+    "codename": "resolute",
+    "architecture": "amd64",
+    "suites": [
+      "resolute",
+      "resolute-updates",
+      "resolute-security"
+    ],
+    "components": [
+      "main",
+      "restricted",
+      "universe",
+      "multiverse"
+    ]
+  },
+  "ubuntu_mirrors": [
+    "http://mirror.yandex.ru/ubuntu",
+    "http://ru.archive.ubuntu.com/ubuntu",
+    "http://archive.ubuntu.com/ubuntu"
+  ],
+  "ubuntu_packages": [
+    "openssh-server",
+    "openssh-client",
+    "wpasupplicant",
+    "iw",
+    "linux-firmware",
+    "wireless-regdb",
+    "netplan.io",
+    "rfkill",
+    "iproute2",
+    "ethtool",
+    "pciutils",
+    "dnsutils",
+    "rsync",
+    "gnupg",
+    "ffmpeg",
+    "lm-sensors",
+    "docker.io",
+    "docker-compose-v2",
+    "ca-certificates",
+    "curl",
+    "git",
+    "tmux",
+    "ufw",
+    "python3",
+    "python3-yaml",
+    "jq",
+    "smartmontools",
+    "btop",
+    "nvtop",
+    "unattended-upgrades",
+    "linux-image-generic",
+    "linux-modules-nvidia-595-open-generic",
+    "nvidia-headless-no-dkms-595-open",
+    "nvidia-utils-595",
+    "libnvidia-encode-595"
+  ],
+  "external_apt": {
+    "netbird": {
+      "repository": "https://pkgs.netbird.io/debian",
+      "suite": "stable",
+      "component": "main",
+      "key_url": "https://pkgs.netbird.io/debian/public.key",
+      "packages": [
+        "netbird"
+      ]
+    },
+    "nvidia-container-toolkit": {
+      "repository": "https://nvidia.github.io/libnvidia-container/stable/deb/amd64",
+      "suite": "/",
+      "component": "",
+      "key_url": "https://nvidia.github.io/libnvidia-container/gpgkey",
+      "packages": [
+        "libnvidia-container1",
+        "libnvidia-container-tools",
+        "nvidia-container-toolkit-base",
+        "nvidia-container-toolkit"
+      ]
+    }
+  }
+}

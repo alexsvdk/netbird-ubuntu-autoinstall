@@ -112,7 +112,7 @@ $env:ARCH = $Arch
 
 # Ubuntu version & series
 if ([string]::IsNullOrWhiteSpace($UbuntuVersion)) {
-    $UbuntuVersion = if ($env:UBUNTU_VERSION) { $env:UBUNTU_VERSION } else { "24.04.4" }
+    $UbuntuVersion = if ($env:UBUNTU_VERSION) { $env:UBUNTU_VERSION } else { "26.04.1" }
 }
 $env:UBUNTU_VERSION = $UbuntuVersion
 
@@ -452,6 +452,8 @@ $NotifyTopic = if ($env:NOTIFY_TOPIC) { $env:NOTIFY_TOPIC } else { "samovar_test
 $MihomoImage = if ($env:MIHOMO_IMAGE) { $env:MIHOMO_IMAGE } else { "metacubex/mihomo:latest" }
 $OfflineBundleRefresh = if ($env:OFFLINE_BUNDLE_REFRESH) { $env:OFFLINE_BUNDLE_REFRESH } else { "auto" }
 $OfflineBundleCache = if ($env:OFFLINE_BUNDLE_CACHE) { $env:OFFLINE_BUNDLE_CACHE } else { "offline/packages/$UbuntuVersion-$Arch" }
+$OfflineArtifactRefresh = if ($env:OFFLINE_ARTIFACT_REFRESH) { $env:OFFLINE_ARTIFACT_REFRESH } else { $OfflineBundleRefresh }
+$OfflineArtifactCache = if ($env:OFFLINE_ARTIFACT_CACHE) { $env:OFFLINE_ARTIFACT_CACHE } else { "offline/images/$UbuntuVersion-$Arch" }
 if ($MihomoImage -notmatch '^[A-Za-z0-9][A-Za-z0-9._/@:-]*$') {
     Write-Error "Error: MIHOMO_IMAGE must be a valid Docker image reference without whitespace."
     exit 1
@@ -460,8 +462,16 @@ if ($OfflineBundleRefresh -notin @("auto", "never")) {
     Write-Error "Error: OFFLINE_BUNDLE_REFRESH must be auto or never."
     exit 1
 }
+if ($OfflineArtifactRefresh -notin @("auto", "never")) {
+    Write-Error "Error: OFFLINE_ARTIFACT_REFRESH must be auto or never."
+    exit 1
+}
 if ([System.IO.Path]::IsPathRooted($OfflineBundleCache) -or $OfflineBundleCache -match '(^|[\\/])\.\.([\\/]|$)') {
     Write-Error "Error: OFFLINE_BUNDLE_CACHE must be a relative path inside the project."
+    exit 1
+}
+if ([System.IO.Path]::IsPathRooted($OfflineArtifactCache) -or $OfflineArtifactCache -match '(^|[\\/])\.\.([\\/]|$)') {
+    Write-Error "Error: OFFLINE_ARTIFACT_CACHE must be a relative path inside the project."
     exit 1
 }
 $env:MIHOMO_IMAGE = $MihomoImage
@@ -489,8 +499,9 @@ try {
         Write-Host "Preparing cached offline APT bundle..."
         $bundleScript = @'
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev python3 >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils gnupg python3 >/dev/null
 bash /work/offline/build-apt-bundle.sh \
+    /work/offline/packages.seeds.json \
     /work/offline/packages.lock.json \
     "/work/$OFFLINE_BUNDLE_CACHE" \
     "$OFFLINE_BUNDLE_REFRESH"
@@ -505,6 +516,50 @@ bash /work/offline/build-apt-bundle.sh \
         if ($LASTEXITCODE -ne 0) {
                 Write-Error "Failed to prepare offline APT bundle."
                 exit 1
+        }
+
+        $artifactCachePath = Join-Path $WorkDir $OfflineArtifactCache
+        $artifactTar = Join-Path $artifactCachePath "mihomo-image.tar"
+        $artifactSha = Join-Path $artifactCachePath "mihomo-image.tar.sha256"
+        $artifactLock = Join-Path $WorkDir "offline\images.lock.json"
+        Write-Host "Offline artifacts: refresh=$OfflineArtifactRefresh"
+        Write-Host "                   cache=$OfflineArtifactCache"
+        if ($OfflineArtifactRefresh -eq "never") {
+            if (-not (Test-Path $artifactTar) -or -not (Test-Path $artifactLock)) {
+                Write-Error "Offline Mihomo artifact cache is missing; rerun with OFFLINE_ARTIFACT_REFRESH=auto."
+                exit 1
+            }
+            $lockedArtifact = (Get-Content -Raw $artifactLock | ConvertFrom-Json).artifacts | Select-Object -First 1
+            if (-not $lockedArtifact -or $lockedArtifact.sha256 -ne (Get-FileHash -Algorithm SHA256 $artifactTar).Hash.ToLower()) {
+                Write-Error "Offline Mihomo artifact cache does not match its lock."
+                exit 1
+            }
+        } else {
+            New-Item -ItemType Directory -Force -Path $artifactCachePath | Out-Null
+            & docker pull --platform linux/amd64 $MihomoImage
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to pull Mihomo image."; exit 1 }
+            $mihomoDigest = (& docker image inspect $MihomoImage --format '{{index .RepoDigests 0}}').Trim()
+            if ($mihomoDigest -notmatch '@sha256:') { Write-Error "Docker did not report an immutable Mihomo digest."; exit 1 }
+            & docker save --output $artifactTar $mihomoDigest
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to save Mihomo image."; exit 1 }
+            $mihomoSha = (Get-FileHash -Algorithm SHA256 $artifactTar).Hash.ToLower()
+            [System.IO.File]::WriteAllText($artifactSha, "$mihomoSha  mihomo-image.tar`n", $Utf8NoBom)
+            $artifactManifest = [ordered]@{
+                schema = 2
+                state = "locked"
+                generated_at = [DateTime]::UtcNow.ToString("o")
+                artifacts = @([ordered]@{
+                    name = "mihomo"
+                    type = "oci-image"
+                    image = $MihomoImage
+                    digest = $mihomoDigest
+                    platform = "linux/amd64"
+                    filename = "mihomo-image.tar"
+                    sha256 = $mihomoSha
+                    target_path = "/var/lib/samovar-offline-artifacts/mihomo-image.tar"
+                })
+            }
+            [System.IO.File]::WriteAllText($artifactLock, ($artifactManifest | ConvertTo-Json -Depth 5) + "`n", $Utf8NoBom)
         }
 
     Write-Host "Generating password hash and autoinstall.yaml..."
@@ -601,7 +656,9 @@ xorriso \
   -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
   -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
   -map /work/autoinstall.yaml /autoinstall.yaml \
-    -map "/work/$OFFLINE_BUNDLE_CACHE" /samovar-offline-apt \
+    -map "/work/$OFFLINE_BUNDLE_CACHE/repository" /samovar-offline-apt \
+    -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar" /samovar-offline-artifacts/mihomo-image.tar \
+    -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar.sha256" /samovar-offline-artifacts/mihomo-image.tar.sha256 \
   -boot_image any replay
 
 xorriso \
@@ -613,7 +670,8 @@ xorriso \
   -osirrox on \
   -indev "$OUTPUT_ISO_PATH" \
   -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
-    -extract /samovar-offline-apt/Packages.gz /tmp/iso-build/offline-Packages.gz \
+    -extract /samovar-offline-apt/dists/samovar/InRelease /tmp/iso-build/offline-InRelease \
+    -extract /samovar-offline-artifacts/mihomo-image.tar.sha256 /tmp/iso-build/mihomo-image.tar.sha256 \
   -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
   -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
   >/dev/null 2>&1
@@ -634,6 +692,7 @@ python3 /work/validate-autoinstall-iso.py \
       "-e", "NOTIFY_TOPIC=$NotifyTopic",
       "-e", "MIHOMO_IMAGE=$MihomoImage",
     "-e", "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache",
+    "-e", "OFFLINE_ARTIFACT_CACHE=$OfflineArtifactCache",
       "-v", "${DockerWorkDir}:/work",
       "-w", "/work"
     )

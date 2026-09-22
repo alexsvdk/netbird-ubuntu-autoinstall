@@ -69,7 +69,7 @@ DISK_SERIAL_PREFIX=QEMU_HARDDISK_
 
 # Целевая архитектура и релиз
 ARCH=amd64
-UBUNTU_VERSION=24.04.4   # или 26.04.1 при выходе
+UBUNTU_VERSION=26.04.1   # Resolute; соответствует offline/packages.seeds.json
 
 # Имя хоста и пользователь
 HOSTNAME=samovar
@@ -95,7 +95,10 @@ NOTIFY_TOPIC=samovar_test
 # Offline APT bundle: `auto` использует persistent cache и скачивает только
 # отсутствующие или более новые .deb; `never` собирает строго из готового cache.
 OFFLINE_BUNDLE_REFRESH=auto
-# OFFLINE_BUNDLE_CACHE=offline/packages/24.04.4-amd64
+# OFFLINE_BUNDLE_CACHE=offline/packages/26.04.1-amd64
+# Mihomo OCI image также кэшируется и добавляется в ISO с digest + SHA-256.
+OFFLINE_ARTIFACT_REFRESH=auto
+# OFFLINE_ARTIFACT_CACHE=offline/images/26.04.1-amd64
 ```
 
 Установите приложение **ntfy** на телефон и подпишитесь на ту же тему. Для реальной установки лучше задать длинную уникальную тему.
@@ -121,14 +124,20 @@ chmod +x build-autoinstall-iso.sh
    - Preflight-скрипт (проверяет UEFI, архитектуру `x86_64` и точное совпадение всех 3 дисков).
    - Утилиты и сервисы `samovar-recovery-agent`, `samovar-provision`, шаблоны Compose и udev-правила.
 4. На выходе формируются два файла:
-   - `ubuntu-24.04.4-autoinstall-amd64.iso`
-   - `ubuntu-24.04.4-autoinstall-amd64.iso.sha256`
+   - `ubuntu-26.04.1-autoinstall-amd64.iso`
+   - `ubuntu-26.04.1-autoinstall-amd64.iso.sha256`
 
 При первой сборке создаётся Git-ignored cache `offline/packages/<release>-<arch>`.
-Он становится локальным APT repository внутри ISO. При следующих сборках cache
-переиспользуется: с `OFFLINE_BUNDLE_REFRESH=auto` заново скачиваются только
-отсутствующие или более новые Ubuntu-пакеты. Для гарантированно офлайн-сборки
-после первоначального наполнения задайте `OFFLINE_BUNDLE_REFRESH=never`.
+`offline/packages.seeds.json` определяет Resolute pockets/components и package
+roots; сборщик разрешает полное дерево зависимостей и создаёт
+`offline/packages.lock.json` с версиями, архитектурами, filenames и SHA-256.
+Внутри ISO размещается подписанный repository `dists/samovar/InRelease` вместе с
+public key. При следующих сборках с `OFFLINE_BUNDLE_REFRESH=auto` повторно
+используются уже скачанные `.deb`; `never` проверяет lock и SHA-256 без сети.
+
+Mihomo сохраняется отдельно в `offline/images/<release>-<arch>` как Docker image
+tar. Его `digest` и SHA-256 фиксируются в `offline/images.lock.json`; ISO копирует
+tar в target, а provisioning проверяет checksum и выполняет `docker load`.
 
 ---
 

@@ -47,6 +47,13 @@ def validate_yaml(path: Path) -> None:
         for command in late_commands
     ):
         fail("autoinstall.late-commands must copy the offline APT bundle into the target.")
+    if not any(
+        isinstance(command, str)
+        and "/cdrom/samovar-offline-artifacts/" in command
+        and "/target/var/lib/samovar-offline-artifacts/" in command
+        for command in late_commands
+    ):
+        fail("autoinstall.late-commands must copy offline OCI artifacts into the target.")
 
     user_data = require_mapping(autoinstall.get("user-data"), "autoinstall.user-data")
     runcmd = user_data.get("runcmd")
@@ -107,6 +114,10 @@ def validate_yaml(path: Path) -> None:
             fail("Docker logging is not configured with bounded rotation in samovar-provision.sh.")
         if "SystemMaxUse=90M" not in provision or "SystemMaxFileSize=8M" not in provision:
             fail("systemd-journald size limits missing in samovar-provision.sh.")
+        if "nvidia-container-toolkit" not in provision or "nvidia-ctk runtime configure --runtime=docker" not in provision:
+            fail("Samovar provisioning must install and configure the NVIDIA Container Toolkit from the offline bundle.")
+        if "netbird libnvidia-container1" not in provision:
+            fail("Samovar provisioning must install NetBird and NVIDIA external APT packages from the offline bundle.")
 
         provision_svc = files.get("/etc/systemd/system/samovar-provision.service", "")
         if "Restart=on-failure" not in provision_svc or "StartLimitIntervalSec=0" not in provision_svc:

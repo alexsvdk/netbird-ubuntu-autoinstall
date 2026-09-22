@@ -97,7 +97,7 @@ if [[ -n "${TARGET_HOSTNAME:-}" ]]; then
   HOSTNAME="$TARGET_HOSTNAME"
 fi
 
-UBUNTU_VERSION="${UBUNTU_VERSION:-24.04.4}"
+UBUNTU_VERSION="${UBUNTU_VERSION:-26.04.1}"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -476,6 +476,8 @@ NOTIFY_TOPIC="${NOTIFY_TOPIC:-samovar_test}"
 MIHOMO_IMAGE="${MIHOMO_IMAGE:-metacubex/mihomo:latest}"
 OFFLINE_BUNDLE_REFRESH="${OFFLINE_BUNDLE_REFRESH:-auto}"
 OFFLINE_BUNDLE_CACHE="${OFFLINE_BUNDLE_CACHE:-offline/packages/${UBUNTU_VERSION}-${ARCH}}"
+OFFLINE_ARTIFACT_REFRESH="${OFFLINE_ARTIFACT_REFRESH:-$OFFLINE_BUNDLE_REFRESH}"
+OFFLINE_ARTIFACT_CACHE="${OFFLINE_ARTIFACT_CACHE:-offline/images/${UBUNTU_VERSION}-${ARCH}}"
 if [[ ! "$MIHOMO_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/@:-]*$ ]]; then
   echo "Error: MIHOMO_IMAGE must be a valid Docker image reference without whitespace." >&2
   exit 1
@@ -484,11 +486,19 @@ if [[ "$OFFLINE_BUNDLE_REFRESH" != "auto" && "$OFFLINE_BUNDLE_REFRESH" != "never
   echo "Error: OFFLINE_BUNDLE_REFRESH must be auto or never." >&2
   exit 1
 fi
+if [[ "$OFFLINE_ARTIFACT_REFRESH" != "auto" && "$OFFLINE_ARTIFACT_REFRESH" != "never" ]]; then
+  echo "Error: OFFLINE_ARTIFACT_REFRESH must be auto or never." >&2
+  exit 1
+fi
 if [[ "$OFFLINE_BUNDLE_CACHE" == /* || "$OFFLINE_BUNDLE_CACHE" == *"../"* || "$OFFLINE_BUNDLE_CACHE" == ".." ]]; then
   echo "Error: OFFLINE_BUNDLE_CACHE must be a relative path inside the project." >&2
   exit 1
 fi
-export APT_REGION APT_MIRROR APT_SECURITY_MIRROR APT_FALLBACK NETWORK_INTERFACE DISK_SERIAL_PREFIX SWAP_SIZE_GIB NOTIFY_TOPIC MIHOMO_IMAGE OFFLINE_BUNDLE_REFRESH OFFLINE_BUNDLE_CACHE
+if [[ "$OFFLINE_ARTIFACT_CACHE" == /* || "$OFFLINE_ARTIFACT_CACHE" == *"../"* || "$OFFLINE_ARTIFACT_CACHE" == ".." ]]; then
+  echo "Error: OFFLINE_ARTIFACT_CACHE must be a relative path inside the project." >&2
+  exit 1
+fi
+export APT_REGION APT_MIRROR APT_SECURITY_MIRROR APT_FALLBACK NETWORK_INTERFACE DISK_SERIAL_PREFIX SWAP_SIZE_GIB NOTIFY_TOPIC MIHOMO_IMAGE OFFLINE_BUNDLE_REFRESH OFFLINE_BUNDLE_CACHE OFFLINE_ARTIFACT_REFRESH OFFLINE_ARTIFACT_CACHE
 
 echo
 echo "APT mirrors: region=${APT_REGION}"
@@ -502,6 +512,8 @@ echo "             fallback=${APT_FALLBACK}"
 echo
 echo "Offline bundle: refresh=${OFFLINE_BUNDLE_REFRESH}"
 echo "                cache=${OFFLINE_BUNDLE_CACHE}"
+echo "Offline artifacts: refresh=${OFFLINE_ARTIFACT_REFRESH}"
+echo "                   cache=${OFFLINE_ARTIFACT_CACHE}"
 echo "Preparing cached offline APT bundle..."
 
 docker run --rm \
@@ -512,12 +524,20 @@ docker run --rm \
   -w /work \
   "ubuntu:${UBUNTU_SERIES}" bash -euc '
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev python3 >/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils gnupg python3 >/dev/null
     bash /work/offline/build-apt-bundle.sh \
+      /work/offline/packages.seeds.json \
       /work/offline/packages.lock.json \
       "/work/$OFFLINE_BUNDLE_CACHE" \
       "$OFFLINE_BUNDLE_REFRESH"
   '
+
+echo "Preparing cached Mihomo OCI artifact..."
+bash "$WORK_DIR/offline/build-oci-artifacts.sh" \
+  "$WORK_DIR/offline/images.lock.json" \
+  "$WORK_DIR/$OFFLINE_ARTIFACT_CACHE" \
+  "$OFFLINE_ARTIFACT_REFRESH" \
+  "$MIHOMO_IMAGE"
 
 echo "Generating password hash and autoinstall.yaml..."
 
@@ -604,7 +624,9 @@ docker run --rm \
       -map /tmp/iso-build/grub-patched.cfg /boot/grub/grub.cfg \
       -map /tmp/iso-build/loopback-patched.cfg /boot/grub/loopback.cfg \
       -map /work/autoinstall.yaml /autoinstall.yaml \
-      -map "/work/$OFFLINE_BUNDLE_CACHE" /samovar-offline-apt \
+      -map "/work/$OFFLINE_BUNDLE_CACHE/repository" /samovar-offline-apt \
+      -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar" /samovar-offline-artifacts/mihomo-image.tar \
+      -map "/work/$OFFLINE_ARTIFACT_CACHE/mihomo-image.tar.sha256" /samovar-offline-artifacts/mihomo-image.tar.sha256 \
       -boot_image any replay
 
     xorriso \
@@ -616,7 +638,8 @@ docker run --rm \
       -osirrox on \
       -indev "$OUTPUT_ISO_PATH" \
       -extract /autoinstall.yaml /tmp/iso-build/embedded-autoinstall.yaml \
-      -extract /samovar-offline-apt/Packages.gz /tmp/iso-build/offline-Packages.gz \
+      -extract /samovar-offline-apt/dists/samovar/InRelease /tmp/iso-build/offline-InRelease \
+      -extract /samovar-offline-artifacts/mihomo-image.tar.sha256 /tmp/iso-build/mihomo-image.tar.sha256 \
       -extract /boot/grub/grub.cfg /tmp/iso-build/embedded-grub.cfg \
       -extract /boot/grub/loopback.cfg /tmp/iso-build/embedded-loopback.cfg \
       >/dev/null 2>&1
