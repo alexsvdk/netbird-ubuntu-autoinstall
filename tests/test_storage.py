@@ -397,12 +397,13 @@ class TestRenderedStorageYaml(unittest.TestCase):
         self.assertIn("create_swap_file /swapfile 8", rendered)
         self.assertIn("create_swap_file /data/swapfile 8", rendered)
 
-    def test_preflight_matches_full_udev_serial(self) -> None:
+    def test_preflight_matches_udev_short_serial(self) -> None:
         rendered = _get_rendered_yaml("QEMU_HARDDISK_")
         self.assertIsNotNone(rendered)
         assert rendered is not None
         self.assertIn("udevadm", rendered)
-        self.assertIn("^ID_SERIAL=", rendered)
+        self.assertIn("^ID_SERIAL_SHORT=", rendered)
+        self.assertNotIn("^ID_SERIAL=", rendered)
         self.assertNotIn("grep -c", rendered)
 
     def test_rendered_yaml_has_poweroff(self) -> None:

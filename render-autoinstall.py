@@ -463,12 +463,13 @@ echo 'Samovar preflight: checking hardware...'
 [ -d /sys/firmware/efi ] || {{ echo 'ERROR: Not in UEFI mode'; exit 1; }}
 # Check arch
 uname -m | grep -q x86_64 || {{ echo 'ERROR: Not x86_64'; exit 1; }}
-# Check full udev serials — each must appear exactly once.
-# lsblk SERIAL may expose only ID_SERIAL_SHORT on QEMU disks.
+# Check udev short serials — each must appear exactly once.
+# The storage layout and configured values use ID_SERIAL_SHORT. ID_SERIAL can
+# include a model prefix, so it must not be compared to these bare serials.
 for serial in {SYSTEM_SSD_SERIAL} {DATA_SSD_SERIAL} {HDD_SERIAL}; do
   count=0
   while read -r dev; do
-    actual=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL=//p')
+        actual=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL_SHORT=//p')
     if [ "$actual" = "$serial" ]; then
       count=$((count + 1))
     fi
