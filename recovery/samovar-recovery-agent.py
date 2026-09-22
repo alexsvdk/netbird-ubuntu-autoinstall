@@ -972,7 +972,34 @@ def _wifi_rollback(netplan_path: Path, backup_path: Path) -> None:
 
 def _netbird_list_profiles() -> list[dict[str, Any]]:
     """Return list of profiles: [{'id': str, 'name': str, 'active': bool}]."""
-    # 1. Try JSON output
+    # 1. Try --show-id text table (standard in NetBird CLI)
+    profiles: list[dict[str, Any]] = []
+    try:
+        res = _run(["netbird", "profile", "list", "--show-id"], check=False, timeout=15)
+        if res.returncode == 0 and res.stdout:
+            stdout = res.stdout.decode(errors="replace")
+            active_markers = {"✓", "*", "active", "yes", "true"}
+            for line in stdout.splitlines():
+                line_s = line.strip()
+                if not line_s or line_s.upper().startswith(("ID", "NAME")):
+                    continue
+                is_active = line_s.startswith("*")
+                line_clean = line_s.lstrip("*").strip()
+                parts = line_clean.split()
+                if len(parts) >= 2:
+                    p_id = parts[0]
+                    p_name = parts[1]
+                    if not is_active and len(parts) >= 3:
+                        is_active = parts[-1].lower() in active_markers
+                    profiles.append({"id": p_id, "name": p_name, "active": is_active})
+                elif len(parts) == 1:
+                    profiles.append({"id": parts[0], "name": parts[0], "active": is_active})
+            if profiles:
+                return profiles
+    except Exception:
+        pass
+
+    # 2. Try JSON output if supported
     try:
         res = _run(["netbird", "profile", "list", "--json"], check=False, timeout=15)
         if res.returncode == 0 and res.stdout:
@@ -990,35 +1017,11 @@ def _netbird_list_profiles() -> list[dict[str, Any]]:
     except Exception:
         pass
 
-    # 2. Fallback to --show-id text table
-    profiles: list[dict[str, Any]] = []
-    try:
-        res = _run(["netbird", "profile", "list", "--show-id"], check=False, timeout=15)
-        stdout = (res.stdout or b"").decode(errors="replace")
-        active_markers = {"✓", "*", "active", "yes", "true"}
-        for line in stdout.splitlines():
-            line_s = line.strip()
-            if not line_s or line_s.upper().startswith(("ID", "NAME")):
-                continue
-            is_active = line_s.startswith("*")
-            line_clean = line_s.lstrip("*").strip()
-            parts = line_clean.split()
-            if len(parts) >= 2:
-                p_id = parts[0]
-                p_name = parts[1]
-                if not is_active and len(parts) >= 3:
-                    is_active = parts[-1].lower() in active_markers
-                profiles.append({"id": p_id, "name": p_name, "active": is_active})
-            elif len(parts) == 1:
-                profiles.append({"id": parts[0], "name": parts[0], "active": is_active})
-    except Exception:
-        pass
-
     # 3. Fallback to plain profile list
-    if not profiles:
-        try:
-            res = _run(["netbird", "profile", "list"], check=False, timeout=15)
-            stdout = (res.stdout or b"").decode(errors="replace")
+    try:
+        res = _run(["netbird", "profile", "list"], check=False, timeout=15)
+        if res.returncode == 0 and res.stdout:
+            stdout = res.stdout.decode(errors="replace")
             for line in stdout.splitlines():
                 line_s = line.strip()
                 if not line_s or line_s.upper().startswith(("ID", "NAME")):
@@ -1026,41 +1029,68 @@ def _netbird_list_profiles() -> list[dict[str, Any]]:
                 is_active = line_s.startswith("*")
                 p_name = line_s.lstrip("*").strip().split()[0]
                 profiles.append({"id": p_name, "name": p_name, "active": is_active})
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     return profiles
 
 
 def _netbird_current_profile() -> str | None:
-    """Return the active profile ID or name, preferring status output."""
+    """Return the active profile ID, resolving names to IDs via profile list."""
+    target_name_or_id: str | None = None
+
+    # 1. Try netbird status --json
     try:
         result = _run(["netbird", "status", "--json"], check=False, timeout=15)
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
-            prof = data.get("profile", {})
-            if isinstance(prof, dict):
-                p_id = prof.get("id") or prof.get("name")
+            if isinstance(data, dict):
+                p_id = (
+                    data.get("profileId")
+                    or data.get("profile_id")
+                    or data.get("profileName")
+                    or data.get("profile_name")
+                )
+                if not p_id:
+                    prof = data.get("profile")
+                    if isinstance(prof, dict):
+                        p_id = prof.get("id") or prof.get("name")
+                    elif isinstance(prof, str):
+                        p_id = prof
                 if p_id:
-                    return str(p_id)
-            elif isinstance(prof, str) and prof:
-                return prof
+                    target_name_or_id = str(p_id)
     except Exception:
         pass
 
-    try:
-        result = _run(["netbird", "status"], check=False, timeout=15)
-        stdout = (result.stdout or b"").decode(errors="replace")
-        match = re.search(r"(?m)^Profile:\s+(\S+)", stdout)
-        if match:
-            return match.group(1)
-    except RecoveryError:
-        pass
+    # 2. Try plain netbird status
+    if not target_name_or_id:
+        try:
+            result = _run(["netbird", "status"], check=False, timeout=15)
+            stdout = (result.stdout or b"").decode(errors="replace")
+            match = re.search(r"(?m)^Profile:\s+(\S+)", stdout)
+            if match:
+                target_name_or_id = match.group(1)
+        except RecoveryError:
+            pass
 
-    for p in _netbird_list_profiles():
-        if p.get("active"):
-            return p.get("id") or p.get("name")
-    return None
+    # 3. Resolve to profile ID from profile list
+    profiles = _netbird_list_profiles()
+    if target_name_or_id:
+        # Check if target_name_or_id is already a known ID
+        for p in profiles:
+            if p.get("id") == target_name_or_id:
+                return p["id"]
+        # Match by name
+        for p in profiles:
+            if p.get("name") == target_name_or_id and p.get("id"):
+                return p["id"]
+
+    # 4. Fallback: check active flag in profiles list
+    for p in profiles:
+        if p.get("active") and p.get("id"):
+            return p["id"]
+
+    return target_name_or_id
 
 
 def _write_setup_key_file(setup_key: str) -> Path:
@@ -1109,7 +1139,7 @@ def _is_netbird_connected(output: str) -> bool:
 
 
 def _netbird_wait_connected(timeout_s: int = 120) -> bool:
-    """Poll netbird status until connected or timeout."""
+    """Poll netbird status until connected and startup check passes, or timeout."""
     deadline = time.monotonic() + timeout_s
     log.info("Waiting for NetBird to connect (timeout=%ds)…", timeout_s)
     while time.monotonic() < deadline:
@@ -1132,9 +1162,14 @@ def _netbird_wait_connected(timeout_s: int = 120) -> bool:
                         )
                         if chk.returncode == 0:
                             log.info("NetBird status: connected and startup check passed.")
-                        else:
-                            log.info("NetBird status: connected (startup check returned %d).", chk.returncode)
-                        return True
+                            return True
+                        log.warning(
+                            "NetBird connected but startup check failed (exit %d): %s",
+                            chk.returncode,
+                            (chk.stderr or b"").decode(errors="replace").strip(),
+                        )
+                        time.sleep(2)
+                        continue
                 except json.JSONDecodeError:
                     pass
         except RecoveryError:
@@ -1149,8 +1184,20 @@ def _netbird_wait_connected(timeout_s: int = 120) -> bool:
             )
             output = (result.stdout or b"").decode(errors="replace")
             if _is_netbird_connected(output):
-                log.info("NetBird status: connected.")
-                return True
+                chk = _run(
+                    ["netbird", "status", "--check", "startup"],
+                    check=False,
+                    timeout=10,
+                )
+                if chk.returncode == 0:
+                    log.info("NetBird status: connected and startup check passed.")
+                    return True
+                log.warning(
+                    "NetBird status connected but startup check failed (exit %d).",
+                    chk.returncode,
+                )
+                time.sleep(2)
+                continue
         except RecoveryError:
             pass
         time.sleep(5)
@@ -1163,16 +1210,28 @@ def _extract_profile_id(output: bytes | str) -> str | None:
         output = output.decode(errors="replace")
     try:
         data = json.loads(output)
-        if isinstance(data, dict) and "id" in data:
-            return str(data["id"])
+        if isinstance(data, dict):
+            for k in ("id", "ID", "profile_id", "profileId"):
+                if k in data and data[k]:
+                    return str(data[k])
     except Exception:
         pass
+
+    # 1. NetBird profile add format: "Profile added: <id>  <name>"
+    m = re.search(r"Profile\s+added:\s+(\S+)", output, re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    # 2. General UUID format
     m = re.search(r"\b([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\b", output)
     if m:
         return m.group(1)
-    m = re.search(r"(?:id|profile)[:\s]+([a-zA-Z0-9_-]+)", output, re.IGNORECASE)
+
+    # 3. Explicit ID label "id: <id>"
+    m = re.search(r"\bid[:\s]+([0-9a-zA-Z_-]{6,})\b", output, re.IGNORECASE)
     if m:
         return m.group(1)
+
     return None
 
 
@@ -1216,8 +1275,13 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
                 profile_id = extracted_id
             else:
                 new_profiles = _netbird_list_profiles()
-                newly_added = next((p for p in new_profiles if p["name"] == profile_name), None)
-                profile_id = newly_added["id"] if newly_added else profile_name
+                matching = [p for p in new_profiles if p["name"] == profile_name]
+                if len(matching) == 1:
+                    profile_id = matching[0]["id"]
+                elif len(matching) > 1:
+                    raise RecoveryError(f"Multiple profiles match name {profile_name}")
+                else:
+                    raise RecoveryError(f"Could not determine profile ID for added profile {profile_name}")
             log.info("Added NetBird profile %s (ID: %s)", profile_name, profile_id)
         except RecoveryError as exc:
             log.error("Failed to add NetBird profile: %s", exc)
@@ -1302,7 +1366,7 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
         try:
             _run(
                 ["netbird", "profile", "remove", old_profile],
-                check=False,
+                check=True,
                 timeout=15,
             )
             log.info("Deleted old NetBird profile: %s", old_profile)
@@ -1773,7 +1837,8 @@ def apply_config(cfg: dict, raw: bytes, *, source_label: str) -> None:
     if not errors and "mihomo" in cfg:
         try:
             mihomo_sha256 = apply_mihomo(cfg["mihomo"])
-            mihomo_applied = True
+            if mihomo_sha256 is not None:
+                mihomo_applied = True
         except RecoveryError as exc:
             errors.append(f"mihomo: {exc}")
 

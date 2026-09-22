@@ -586,22 +586,29 @@ echo "Offline artifacts: refresh=${OFFLINE_ARTIFACT_REFRESH}"
 echo "                   cache=${OFFLINE_ARTIFACT_CACHE}"
 echo "Preparing cached offline APT bundle..."
 
+# Builder container matches target release: ubuntu:26.04
+BUILDER_IMAGE="ubuntu:${UBUNTU_SERIES}"
+if [[ "$OFFLINE_BUNDLE_REFRESH" == "never" ]]; then
+  if ! docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1; then
+    echo "Error: builder image $BUILDER_IMAGE is not available locally and OFFLINE_BUNDLE_REFRESH=never." >&2
+    exit 1
+  fi
+fi
+
 docker run --rm \
   --platform "linux/${ARCH}" \
   -e OFFLINE_BUNDLE_CACHE="$OFFLINE_BUNDLE_CACHE" \
   -e OFFLINE_BUNDLE_REFRESH="$OFFLINE_BUNDLE_REFRESH" \
   -v "$DOCKER_WORK_DIR:/work" \
   -w /work \
-  "ubuntu:${UBUNTU_SERIES}" bash -euc '
+  "$BUILDER_IMAGE" bash -euc '
     if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then
       apt-get update -qq
       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
     else
       if ! command -v python3 >/dev/null 2>&1; then
-        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
-        echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null
+        echo "Error: python3 is required in builder image for offline verification." >&2
+        exit 1
       fi
     fi
     bash /work/offline/build-apt-bundle.sh \
@@ -646,7 +653,7 @@ docker run --rm \
   -e OFFLINE_BUNDLE_REFRESH="$OFFLINE_BUNDLE_REFRESH" \
   -v "$DOCKER_WORK_DIR:/work" \
   -w /work \
-  ubuntu:24.04 bash -euc '
+  "$BUILDER_IMAGE" bash -euc '
     if [ "${OFFLINE_BUNDLE_REFRESH:-auto}" = "never" ]; then
       rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
       echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
@@ -680,7 +687,7 @@ docker run --rm \
   -e OFFLINE_ARTIFACT_CACHE="$OFFLINE_ARTIFACT_CACHE" \
   -v "$DOCKER_WORK_DIR:/work" \
   "${DOCKER_OUTPUT_MOUNT[@]}" \
-  ubuntu:24.04 bash -euc '
+  "$BUILDER_IMAGE" bash -euc '
     if [ "${OFFLINE_BUNDLE_REFRESH:-auto}" = "never" ]; then
       rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
       echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list

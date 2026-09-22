@@ -562,16 +562,24 @@ try {
         Write-Host "Offline bundle: refresh=$OfflineBundleRefresh"
         Write-Host "                cache=$OfflineBundleCache"
         Write-Host "Preparing cached offline APT bundle..."
+        # Target builder container matches target release: ubuntu:26.04
+        $BuilderImage = "ubuntu:$UbuntuSeries"
+        if ($OfflineBundleRefresh -eq "never") {
+            & docker image inspect $BuilderImage >$null 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Error: builder image $BuilderImage is not available locally and OFFLINE_BUNDLE_REFRESH=never."
+                exit 1
+            }
+        }
+
         $bundleScript = @'
 if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
 else
     if ! command -v python3 >/dev/null 2>&1; then
-        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
-        echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null
+        echo "Error: python3 is required in builder image for offline bundle verification." >&2
+        exit 1
     fi
 fi
 bash /work/offline/build-apt-bundle.sh \
@@ -586,7 +594,7 @@ bash /work/offline/build-apt-bundle.sh \
             -e "OFFLINE_BUNDLE_REFRESH=$OfflineBundleRefresh" `
             -v "${DockerWorkDir}:/work" `
             -w /work `
-            "ubuntu:$UbuntuSeries" bash -euc $bundleScript
+            $BuilderImage bash -euc $bundleScript
         if ($LASTEXITCODE -ne 0) {
                 Write-Error "Failed to prepare offline APT bundle."
                 exit 1
@@ -722,7 +730,7 @@ trap - EXIT
       -e "OFFLINE_BUNDLE_REFRESH=$OfflineBundleRefresh" `
       -v "${DockerWorkDir}:/work" `
       -w /work `
-      ubuntu:24.04 bash /work/.autoinstall-step1.tmp.sh
+      $BuilderImage bash /work/.autoinstall-step1.tmp.sh
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to generate autoinstall.yaml."
@@ -835,7 +843,7 @@ python3 /work/validate-autoinstall-iso.py \
         $DockerOutputDir = $OutputIsoDir.Replace('\', '/')
         $dockerStep2Args += @("-v", "${DockerOutputDir}:/output")
     }
-    $dockerStep2Args += @("ubuntu:24.04", "bash", "/work/.autoinstall-step2.tmp.sh")
+    $dockerStep2Args += @($BuilderImage, "bash", "/work/.autoinstall-step2.tmp.sh")
     & docker @dockerStep2Args
 
     if ($LASTEXITCODE -ne 0) {

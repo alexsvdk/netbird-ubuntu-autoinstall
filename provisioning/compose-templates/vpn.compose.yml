@@ -21,7 +21,7 @@
 #   docker compose up -d
 services:
   vpn:
-    image: metacubex/mihomo:latest
+    image: ${MIHOMO_IMAGE:-metacubex/mihomo:latest}
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -42,7 +42,7 @@ services:
           exit 1
         fi
 
-        # Allow loopback, established connections, and local TUN interfaces
+        # Allow loopback, established connections, and local TUN interfaces (IPv4)
         iptables -A OUTPUT -o lo -j ACCEPT
         iptables -A OUTPUT -o tun+ -j ACCEPT
         iptables -A OUTPUT -o Meta -j ACCEPT
@@ -59,14 +59,25 @@ services:
         fi
 
         # Allow upstream proxy endpoints from Mihomo configuration
+        # Handles block YAML (server: ...), inline YAML ({... server: ...}), and proxy-providers (url: ...)
         CONFIG="/root/.config/mihomo/config.yaml"
         if [ -f "$CONFIG" ]; then
-          for srv in $(awk -F':' '/^[[:space:]]*(-[[:space:]]*)?server:[[:space:]]*/ {
-            val=$0
-            sub(/^.*server:[[:space:]]*/, "", val)
-            gsub(/^["\047]|["\047]$/, "", val)
-            gsub(/[[:space:]].*$/, "", val)
-            if (val != "") print val
+          for srv in $(awk '
+          {
+            line = $0
+            while (match(line, /server:[[:space:]]*["\047]?([a-zA-Z0-9._-]+)/)) {
+              s = substr(line, RSTART, RLENGTH)
+              sub(/server:[[:space:]]*["\047]?/, "", s)
+              print s
+              line = substr(line, RSTART + RLENGTH)
+            }
+            line = $0
+            while (match(line, /url:[[:space:]]*["\047]?https?:\/\/([a-zA-Z0-9._-]+)/)) {
+              s = substr(line, RSTART, RLENGTH)
+              sub(/url:[[:space:]]*["\047]?https?:\/\//, "", s)
+              print s
+              line = substr(line, RSTART + RLENGTH)
+            }
           }' "$CONFIG" 2>/dev/null); do
             case "$srv" in
               *[!0-9.]*)
@@ -85,12 +96,21 @@ services:
           done
         fi
 
-        # Drop all other outbound traffic (kill switch active)
+        # Drop all other outbound IPv4 traffic (kill switch active)
         iptables -P OUTPUT DROP
+
+        # IPv6 kill switch: drop all outbound IPv6 except loopback and tun
+        if command -v ip6tables >/dev/null 2>&1; then
+          ip6tables -A OUTPUT -o lo -j ACCEPT
+          ip6tables -A OUTPUT -o tun+ -j ACCEPT
+          ip6tables -A OUTPUT -o Meta -j ACCEPT
+          ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          ip6tables -P OUTPUT DROP
+        fi
 
         exec /mihomo -d /root/.config/mihomo
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090 >/dev/null 2>&1 || pidof mihomo >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

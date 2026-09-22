@@ -42,7 +42,7 @@ def test_retry_reuses_deterministic_netbird_profile_name() -> None:
             return subprocess.CompletedProcess(cmd, 0, json.dumps(profiles).encode(), b"")
         if cmd[:3] == ["netbird", "profile", "add"]:
             profiles.append({"id": "gen-id-1", "name": cmd[3], "active": False})
-            return subprocess.CompletedProcess(cmd, 0, b"Profile gen-id-1 added\n", b"")
+            return subprocess.CompletedProcess(cmd, 0, f"Profile added: gen-id-1  {cmd[3]}\n".encode(), b"")
         if cmd == ["netbird", "status", "--json"]:
             return subprocess.CompletedProcess(
                 cmd, 0, b'{"management":{"connected":true,"url":"https://api.netbird.io:443"}}', b""
@@ -244,3 +244,104 @@ def test_mihomo_rollback_without_backup_cleans_up(tmp_path: Path) -> None:
 
     assert not cfg.exists()
     mock_run.assert_called_once_with(["systemctl", "stop", "mihomo.service"], check=False, timeout=30)
+
+
+def test_netbird_extracts_id_from_real_add_output() -> None:
+    assert (
+        agent._extract_profile_id(
+            b"Profile added: a1b2c3d4  samovar-gen2026091901\n"
+        )
+        == "a1b2c3d4"
+    )
+
+
+def test_netbird_startup_check_is_required_for_health() -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if cmd == ["netbird", "status", "--json"]:
+            return subprocess.CompletedProcess(cmd, 0, b'{"management":{"connected":true}}', b"")
+        if cmd == ["netbird", "status", "--check", "startup"]:
+            return subprocess.CompletedProcess(cmd, 1, b"", b"relay unavailable")
+        if cmd == ["netbird", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, b"Management: Disconnected\n", b"")
+        raise AssertionError(cmd)
+
+    with (
+        patch.object(agent, "_run", side_effect=fake_run),
+        patch.object(agent.time, "monotonic", side_effect=[0, 0, 2]),
+        patch.object(agent.time, "sleep"),
+    ):
+        assert agent._netbird_wait_connected(timeout_s=1) is False
+
+
+def test_current_netbird_profile_is_resolved_to_id() -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if cmd == ["netbird", "status", "--json"]:
+            return subprocess.CompletedProcess(cmd, 0, b'{"profileName":"old-name"}', b"")
+        if cmd == ["netbird", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, b"Profile: old-name\n", b"")
+        if cmd == ["netbird", "profile", "list", "--json"]:
+            return subprocess.CompletedProcess(cmd, 1, b"", b"unknown flag: --json")
+        if cmd == ["netbird", "profile", "list", "--show-id"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, "ID        NAME      ACTIVE\na1b2c3d4  old-name  ✓\n".encode(), b""
+            )
+        raise AssertionError(cmd)
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        assert agent._netbird_current_profile() == "a1b2c3d4"
+
+
+def test_disabled_mihomo_is_not_rolled_back_when_netbird_fails() -> None:
+    import pytest
+    config = {
+        "generation": 2026092201,
+        "target": "samovar",
+        "mihomo": {"enabled": False},
+        "netbird": {
+            "management_url": "https://api.netbird.io:443",
+            "setup_key": "test-only",
+        },
+    }
+    with (
+        patch.object(agent, "apply_mihomo", return_value=None),
+        patch.object(agent, "apply_netbird", side_effect=agent.RecoveryError("offline")),
+        patch.object(agent, "_mihomo_rollback") as rollback,
+    ):
+        with pytest.raises(agent.RecoveryError):
+            agent.apply_config(config, b"{}", source_label="test")
+    rollback.assert_not_called()
+
+
+def test_netbird_profile_remove_checks_exit_code() -> None:
+    import pytest
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if cmd[:3] == ["netbird", "profile", "add"]:
+            return subprocess.CompletedProcess(cmd, 0, b"Profile added: new-id-1  samovar-gen2026091901\n", b"")
+        if cmd[:3] == ["netbird", "profile", "select"]:
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+        if cmd[:3] == ["netbird", "profile", "remove"]:
+            raise agent.RecoveryError("Profile remove failed")
+        if cmd[:2] == ["netbird", "up"]:
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+        if cmd == ["netbird", "status", "--json"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, b'{"management":{"connected":true,"url":"https://api.netbird.io:443"}}', b""
+            )
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    config = {
+        "management_url": "https://api.netbird.io:443",
+        "setup_key": "test-setup-key",
+    }
+    with (
+        patch.object(agent, "_netbird_current_profile", return_value="old-profile-id"),
+        patch.object(agent, "_netbird_list_profiles", return_value=[]),
+        patch.object(agent, "_run", side_effect=fake_run),
+        patch.object(agent, "_netbird_wait_connected", return_value=True),
+        patch.object(agent, "_write_setup_key_file", return_value=Path("/run/test-key")),
+        patch.object(agent, "_secure_delete"),
+        patch.object(agent.log, "warning") as mock_warn,
+    ):
+        pid = agent.apply_netbird(config, 2026091901)
+        assert pid == "new-id-1"
+        assert any("Could not delete old profile" in str(call) for call in mock_warn.call_args_list)

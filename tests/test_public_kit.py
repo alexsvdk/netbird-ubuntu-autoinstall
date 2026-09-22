@@ -503,6 +503,21 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn('"xorriso"', seeds)
         self.assertIn('"python3-jsonschema"', seeds)
 
+    def test_offline_builders_match_target_release(self) -> None:
+        import json
+        seeds = json.loads((ROOT / "offline" / "packages.seeds.json").read_text(encoding="utf-8"))
+        release = seeds["target"]["release"]
+        shell = (ROOT / "build-autoinstall-iso.sh").read_text(encoding="utf-8")
+        powershell = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
+        self.assertIn(f"ubuntu:{release}", shell)
+        self.assertIn(f"ubuntu:{release}", powershell)
+
+    def test_never_mode_does_not_run_apt_get(self) -> None:
+        sh = (ROOT / "build-autoinstall-iso.sh").read_text(encoding="utf-8")
+        wrapper = sh.split('if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then', 1)[1]
+        never_branch = wrapper.split("else", 1)[1].split("fi", 1)[0]
+        self.assertNotIn("apt-get", never_branch)
+
 
 if __name__ == "__main__":
     unittest.main()
