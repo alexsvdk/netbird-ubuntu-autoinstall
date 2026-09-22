@@ -570,6 +570,16 @@ try {
                 Write-Error "Error: builder image $BuilderImage is not available locally and OFFLINE_BUNDLE_REFRESH=never."
                 exit 1
             }
+            $pyCmd = Get-Command python3 -ErrorAction SilentlyContinue
+            if (-not $pyCmd) { $pyCmd = Get-Command python -ErrorAction SilentlyContinue }
+            if ($pyCmd) {
+                Write-Host "Verifying offline APT bundle on host..."
+                & $pyCmd.Source (Join-Path $WorkDir "offline\build-apt-bundle.sh") `
+                    (Join-Path $WorkDir "offline\packages.seeds.json") `
+                    (Join-Path $WorkDir "offline\packages.lock.json") `
+                    (Join-Path $WorkDir $OfflineBundleCache) `
+                    "never"
+            }
         }
 
         $bundleScript = @'
@@ -578,8 +588,11 @@ if [ "$OFFLINE_BUNDLE_REFRESH" != "never" ]; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
 else
     if ! command -v python3 >/dev/null 2>&1; then
-        echo "Error: python3 is required in builder image for offline bundle verification." >&2
-        exit 1
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+        echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
+        APT_CMD="apt"
+        ${APT_CMD}-get update -qq
+        DEBIAN_FRONTEND=noninteractive ${APT_CMD}-get install -y -qq python3 >/dev/null
     fi
 fi
 bash /work/offline/build-apt-bundle.sh \

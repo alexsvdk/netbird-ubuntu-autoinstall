@@ -466,9 +466,14 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("iptables -A OUTPUT -o tun+ -j ACCEPT", vpn_compose)
         self.assertIn("iptables -A OUTPUT -o lo -j ACCEPT", vpn_compose)
         self.assertIn("127.0.0.11", vpn_compose)
-        # Fail-closed check when iptables is missing
+        # Fail-closed check when iptables/ip6tables is missing
         self.assertIn("command -v iptables", vpn_compose)
         self.assertIn("Error: iptables is required", vpn_compose)
+        self.assertIn("command -v ip6tables", vpn_compose)
+        self.assertIn("Error: ip6tables is required", vpn_compose)
+        # Healthcheck verifies HTTP controller and rejects simple pidof
+        self.assertIn("wget -qO- http://127.0.0.1:9090", vpn_compose)
+        self.assertNotIn("pidof mihomo", vpn_compose)
         # Dynamic upstream proxy resolution from config.yaml
         self.assertIn("server:", vpn_compose)
         self.assertIn("ip route show default", vpn_compose)

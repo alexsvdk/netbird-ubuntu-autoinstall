@@ -292,6 +292,13 @@ class TestConfigSchemaInvalidCases(unittest.TestCase):
         instance["mihomo"]["config"]["mixed-port"] = 0
         _assert_invalid(self, instance, self.schema)
 
+    def test_mihomo_config_proxy_providers_fails(self) -> None:
+        instance = copy.deepcopy(self.example)
+        instance["mihomo"]["config"]["proxy-providers"] = {
+            "provider1": {"type": "http", "url": "https://example.com/sub"}
+        }
+        _assert_invalid(self, instance, self.schema)
+
     # --- created_at format ---
 
     def test_created_at_invalid_format_fails(self) -> None:

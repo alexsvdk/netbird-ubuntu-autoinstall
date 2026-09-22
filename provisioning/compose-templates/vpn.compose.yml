@@ -59,7 +59,7 @@ services:
         fi
 
         # Allow upstream proxy endpoints from Mihomo configuration
-        # Handles block YAML (server: ...), inline YAML ({... server: ...}), and proxy-providers (url: ...)
+        # Handles block YAML (server: ...) and inline YAML ({... server: ...})
         CONFIG="/root/.config/mihomo/config.yaml"
         if [ -f "$CONFIG" ]; then
           for srv in $(awk '
@@ -68,13 +68,6 @@ services:
             while (match(line, /server:[[:space:]]*["\047]?([a-zA-Z0-9._-]+)/)) {
               s = substr(line, RSTART, RLENGTH)
               sub(/server:[[:space:]]*["\047]?/, "", s)
-              print s
-              line = substr(line, RSTART + RLENGTH)
-            }
-            line = $0
-            while (match(line, /url:[[:space:]]*["\047]?https?:\/\/([a-zA-Z0-9._-]+)/)) {
-              s = substr(line, RSTART, RLENGTH)
-              sub(/url:[[:space:]]*["\047]?https?:\/\//, "", s)
               print s
               line = substr(line, RSTART + RLENGTH)
             }
@@ -99,18 +92,21 @@ services:
         # Drop all other outbound IPv4 traffic (kill switch active)
         iptables -P OUTPUT DROP
 
-        # IPv6 kill switch: drop all outbound IPv6 except loopback and tun
-        if command -v ip6tables >/dev/null 2>&1; then
-          ip6tables -A OUTPUT -o lo -j ACCEPT
-          ip6tables -A OUTPUT -o tun+ -j ACCEPT
-          ip6tables -A OUTPUT -o Meta -j ACCEPT
-          ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-          ip6tables -P OUTPUT DROP
+        # IPv6 kill switch: drop all outbound IPv6 except loopback and tun.
+        # Fail closed: ip6tables is mandatory for IPv6 isolation.
+        if ! command -v ip6tables >/dev/null 2>&1; then
+          echo "Error: ip6tables is required for fail-closed IPv6 kill switch." >&2
+          exit 1
         fi
+        ip6tables -A OUTPUT -o lo -j ACCEPT
+        ip6tables -A OUTPUT -o tun+ -j ACCEPT
+        ip6tables -A OUTPUT -o Meta -j ACCEPT
+        ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        ip6tables -P OUTPUT DROP
 
         exec /mihomo -d /root/.config/mihomo
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090 >/dev/null 2>&1 || pidof mihomo >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090 >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

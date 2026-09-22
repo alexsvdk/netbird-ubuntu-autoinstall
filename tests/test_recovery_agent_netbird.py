@@ -121,11 +121,15 @@ def test_current_profile_returns_active_profile_id_not_table_header() -> None:
 
 def test_current_profile_prefers_daemon_status() -> None:
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        assert cmd == ["netbird", "status"]
-        return subprocess.CompletedProcess(cmd, 0, b"Profile: samovar-gen2026091901\n", b"")
+        if cmd == ["netbird", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, b"Profile: samovar-gen2026091901\n", b"")
+        if cmd == ["netbird", "profile", "list", "--show-id"]:
+            output = "ID        NAME                  ACTIVE\na1b2c3d4  samovar-gen2026091901 ✓\n".encode()
+            return subprocess.CompletedProcess(cmd, 0, output, b"")
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
     with patch.object(agent, "_run", side_effect=fake_run):
-        assert agent._netbird_current_profile() == "samovar-gen2026091901"
+        assert agent._netbird_current_profile() == "a1b2c3d4"
 
 def test_mihomo_validation_uses_the_compose_image() -> None:
     result = subprocess.CompletedProcess(["docker", "compose"], 0, b"", b"")
@@ -345,3 +349,72 @@ def test_netbird_profile_remove_checks_exit_code() -> None:
         pid = agent.apply_netbird(config, 2026091901)
         assert pid == "new-id-1"
         assert any("Could not delete old profile" in str(call) for call in mock_warn.call_args_list)
+
+
+def test_current_netbird_profile_picks_active_on_duplicate_names() -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if cmd == ["netbird", "status", "--json"]:
+            return subprocess.CompletedProcess(cmd, 0, b'{"profileName":"duplicate"}', b"")
+        if cmd == ["netbird", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, b"Profile: duplicate\n", b"")
+        if cmd == ["netbird", "profile", "list", "--json"]:
+            return subprocess.CompletedProcess(cmd, 1, b"", b"unknown flag: --json")
+        if cmd == ["netbird", "profile", "list", "--show-id"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, "ID        NAME       ACTIVE\n11111111  duplicate\n22222222  duplicate  ✓\n".encode(), b""
+            )
+        raise AssertionError(cmd)
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        assert agent._netbird_current_profile() == "22222222"
+
+
+def test_current_netbird_profile_returns_none_when_profile_list_fails() -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if cmd == ["netbird", "status", "--json"]:
+            return subprocess.CompletedProcess(cmd, 0, b'{"profileName":"old-name"}', b"")
+        if cmd == ["netbird", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, b"Profile: old-name\n", b"")
+        if cmd[:2] == ["netbird", "profile"]:
+            return subprocess.CompletedProcess(cmd, 1, b"", b"error listing profiles")
+        raise AssertionError(cmd)
+
+    with patch.object(agent, "_run", side_effect=fake_run):
+        assert agent._netbird_current_profile() is None
+
+
+def test_apply_netbird_fails_when_multiple_profiles_match_generation() -> None:
+    import pytest
+    profiles = [
+        {"id": "gen-1", "name": "samovar-gen2026091901", "active": False},
+        {"id": "gen-2", "name": "samovar-gen2026091901", "active": True},
+    ]
+    config = {
+        "management_url": "https://api.netbird.io:443",
+        "setup_key": "test-setup-key",
+    }
+    with (
+        patch.object(agent, "_netbird_current_profile", return_value="gen-2"),
+        patch.object(agent, "_netbird_list_profiles", return_value=profiles),
+    ):
+        with pytest.raises(agent.RecoveryError, match="Multiple existing profiles match"):
+            agent.apply_netbird(config, 2026091901)
+
+
+def test_validate_mihomo_rejects_proxy_providers() -> None:
+    import pytest
+    mihomo_config = {
+        "enabled": True,
+        "config": {
+            "mode": "rule",
+            "mixed-port": 7890,
+            "proxies": [{"name": "proxy1", "type": "ss", "server": "1.2.3.4", "port": 443}],
+            "proxy-groups": [],
+            "rules": ["MATCH,DIRECT"],
+            "proxy-providers": {
+                "sub": {"type": "http", "url": "https://example.com/sub"}
+            },
+        },
+    }
+    with pytest.raises(agent.SchemaError, match="proxy-providers are not supported"):
+        agent._validate_mihomo(mihomo_config)

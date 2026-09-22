@@ -578,6 +578,10 @@ def _validate_mihomo(mh: Any) -> None:
     for i, r in enumerate(rules):
         if not isinstance(r, str):
             raise SchemaError(f"mihomo.config.rules[{i}] must be a string.")
+    if "proxy-providers" in cfg:
+        raise SchemaError(
+            "mihomo.config: proxy-providers are not supported by the container kill switch; define inline proxies instead."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1075,22 +1079,28 @@ def _netbird_current_profile() -> str | None:
 
     # 3. Resolve to profile ID from profile list
     profiles = _netbird_list_profiles()
-    if target_name_or_id:
+    if target_name_or_id and profiles:
         # Check if target_name_or_id is already a known ID
-        for p in profiles:
-            if p.get("id") == target_name_or_id:
-                return p["id"]
-        # Match by name
-        for p in profiles:
-            if p.get("name") == target_name_or_id and p.get("id"):
-                return p["id"]
+        id_matches = [p["id"] for p in profiles if p.get("id") == target_name_or_id]
+        if id_matches:
+            return id_matches[0]
+        # Match by name: if multiple profiles share the name, prefer the active one
+        name_matches = [p for p in profiles if p.get("name") == target_name_or_id and p.get("id")]
+        if name_matches:
+            active_matches = [p for p in name_matches if p.get("active")]
+            if len(active_matches) == 1:
+                return active_matches[0]["id"]
+            if len(name_matches) == 1:
+                return name_matches[0]["id"]
+            return None
 
     # 4. Fallback: check active flag in profiles list
-    for p in profiles:
-        if p.get("active") and p.get("id"):
-            return p["id"]
+    if profiles:
+        active_profiles = [p["id"] for p in profiles if p.get("active") and p.get("id")]
+        if len(active_profiles) == 1:
+            return active_profiles[0]
 
-    return target_name_or_id
+    return None
 
 
 def _write_setup_key_file(setup_key: str) -> Path:
@@ -1256,7 +1266,10 @@ def apply_netbird(nb_cfg: dict, generation: int) -> str | None:
 
     # Idempotent profile handling: reuse existing profile if present
     existing_profiles = _netbird_list_profiles()
-    existing = next((p for p in existing_profiles if p["name"] == profile_name), None)
+    matching = [p for p in existing_profiles if p.get("name") == profile_name]
+    if len(matching) > 1:
+        raise RecoveryError(f"Multiple existing profiles match {profile_name}")
+    existing = matching[0] if matching else None
     profile_created = False
     profile_id = ""
 

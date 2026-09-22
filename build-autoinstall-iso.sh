@@ -593,6 +593,14 @@ if [[ "$OFFLINE_BUNDLE_REFRESH" == "never" ]]; then
     echo "Error: builder image $BUILDER_IMAGE is not available locally and OFFLINE_BUNDLE_REFRESH=never." >&2
     exit 1
   fi
+  if command -v python3 >/dev/null 2>&1; then
+    echo "Verifying offline APT bundle on host..."
+    python3 "$WORK_DIR/offline/build-apt-bundle.sh" \
+      "$WORK_DIR/offline/packages.seeds.json" \
+      "$WORK_DIR/offline/packages.lock.json" \
+      "$WORK_DIR/$OFFLINE_BUNDLE_CACHE" \
+      never
+  fi
 fi
 
 docker run --rm \
@@ -607,8 +615,11 @@ docker run --rm \
       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-utils ca-certificates curl gnupg python3 >/dev/null
     else
       if ! command -v python3 >/dev/null 2>&1; then
-        echo "Error: python3 is required in builder image for offline verification." >&2
-        exit 1
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+        echo "deb [trusted=yes] file:/work/${OFFLINE_BUNDLE_CACHE}/repository samovar main" > /etc/apt/sources.list.d/samovar-offline.list
+        APT_CMD="apt"
+        ${APT_CMD}-get update -qq
+        DEBIAN_FRONTEND=noninteractive ${APT_CMD}-get install -y -qq python3 >/dev/null
       fi
     fi
     bash /work/offline/build-apt-bundle.sh \
