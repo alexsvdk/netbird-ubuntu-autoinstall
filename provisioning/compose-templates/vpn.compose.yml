@@ -21,7 +21,7 @@
 #   docker compose up -d
 services:
   vpn:
-    image: ${MIHOMO_IMAGE:-metacubex/mihomo:latest}
+    image: ${MIHOMO_IMAGE:-metacubex/mihomo:v1.19.31@sha256:739edd73a352d6beb82fad6790ef9d417a4d6f061584cc3cab1bd4536d1c60e5}
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -34,6 +34,17 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -eu
+
+        # VPN sidecar requires static inline proxies for fail-closed firewall isolation.
+        CONFIG="/root/.config/mihomo/config.yaml"
+        if [ -f "$CONFIG" ]; then
+          if grep -q -E '^[[:space:]]*proxy-providers:' "$CONFIG" 2>/dev/null; then
+            echo "Error: proxy-providers are not supported in VPN sidecar TUN mode. Define all endpoints under 'proxies:' in mihomo-vpn.yaml." >&2
+            exit 1
+          fi
+        fi
+
         # Kill switch: drop all outbound traffic by default so that if mihomo crashes
         # or the tunnel collapses, unencrypted traffic from sidecar apps cannot leak.
         # Fail closed: iptables is mandatory for traffic isolation.
@@ -106,7 +117,7 @@ services:
 
         exec /mihomo -d /root/.config/mihomo
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090 >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "ip link show tun0 >/dev/null 2>&1 || ip link show Meta >/dev/null 2>&1 || (wget -S --spider -T 2 http://127.0.0.1:9090 2>&1 | grep -q 'HTTP/.*[24]0[0-9]') || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

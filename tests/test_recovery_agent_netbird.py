@@ -401,8 +401,7 @@ def test_apply_netbird_fails_when_multiple_profiles_match_generation() -> None:
             agent.apply_netbird(config, 2026091901)
 
 
-def test_validate_mihomo_rejects_proxy_providers() -> None:
-    import pytest
+def test_validate_mihomo_allows_proxy_providers_with_inline_bootstrap() -> None:
     mihomo_config = {
         "enabled": True,
         "config": {
@@ -416,5 +415,4 @@ def test_validate_mihomo_rejects_proxy_providers() -> None:
             },
         },
     }
-    with pytest.raises(agent.SchemaError, match="proxy-providers are not supported"):
-        agent._validate_mihomo(mihomo_config)
+    agent._validate_mihomo(mihomo_config)

@@ -65,11 +65,22 @@ except (OSError, json.JSONDecodeError) as error:
 
 if lock.get("schema") != 2 or lock.get("state") != "locked":
     raise SystemExit("Error: offline lock is not generated; rerun with OFFLINE_BUNDLE_REFRESH=auto.")
+if not lock.get("packages"):
+    raise SystemExit("Error: offline lock contains no packages.")
 if not (repository / "dists/samovar/InRelease").is_file():
     raise SystemExit("Error: signed offline repository is missing InRelease.")
 if not (repository / "samovar-offline-archive-keyring.gpg").is_file():
     raise SystemExit("Error: offline repository signing key is missing.")
 
+metadata = lock.get("metadata", {})
+for rel_path, expected_hash in metadata.items():
+    meta_file = repository / rel_path
+    if not meta_file.is_file():
+        raise SystemExit(f"Error: locked metadata file missing: {rel_path}")
+    if hashlib.sha256(meta_file.read_bytes()).hexdigest() != expected_hash:
+        raise SystemExit(f"Error: metadata SHA-256 mismatch: {rel_path}")
+
+locked_paths = set()
 for package in lock.get("packages", []):
     path = repository / package["path"]
     if not path.is_file():
@@ -77,6 +88,12 @@ for package in lock.get("packages", []):
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest != package["sha256"]:
         raise SystemExit(f"Error: SHA-256 mismatch: {package['path']}")
+    locked_paths.add(package["path"])
+
+repo_debs = {p.relative_to(repository).as_posix() for p in repository.rglob("*.deb")}
+unlisted = repo_debs - locked_paths
+if unlisted:
+    raise SystemExit(f"Error: unlisted .deb files in offline repository: {sorted(unlisted)}")
 PY
 }
 
@@ -276,14 +293,29 @@ gpg --batch --yes --export "$FINGERPRINT" >"$STAGING/samovar-offline-archive-key
 gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$FINGERPRINT" \
   --clearsign --output "$STAGING/dists/samovar/InRelease" "$STAGING/dists/samovar/Release"
 
-python3 - "$SEEDS_FILE" "$WORK_DIR/locked-packages.json" "$LOCK_FILE" "$selected_mirror" <<'PY'
+python3 - "$SEEDS_FILE" "$WORK_DIR/locked-packages.json" "$LOCK_FILE" "$selected_mirror" "$STAGING" "$TARGET_ARCH" <<'PY'
 import datetime
+import hashlib
 import json
 import sys
 from pathlib import Path
 
-seeds_path, packages_path, lock_path, mirror = sys.argv[1:]
+seeds_path, packages_path, lock_path, mirror, staging_dir, target_arch = sys.argv[1:]
+staging = Path(staging_dir)
 seeds = json.loads(Path(seeds_path).read_text(encoding="utf-8"))
+
+metadata = {}
+for m_rel in (
+    "dists/samovar/InRelease",
+    "dists/samovar/Release",
+    f"dists/samovar/main/binary-{target_arch}/Packages",
+    f"dists/samovar/main/binary-{target_arch}/Packages.gz",
+    "samovar-offline-archive-keyring.gpg",
+):
+    mp = staging / m_rel
+    if mp.is_file():
+        metadata[m_rel] = hashlib.sha256(mp.read_bytes()).hexdigest()
+
 lock = {
     "schema": 2,
     "state": "locked",
@@ -292,6 +324,7 @@ lock = {
     "target": seeds["target"],
     "ubuntu_mirror": mirror,
     "external_apt": seeds["external_apt"],
+    "metadata": metadata,
     "packages": json.loads(Path(packages_path).read_text(encoding="utf-8")),
 }
 names = {package["name"] for package in lock["packages"]}

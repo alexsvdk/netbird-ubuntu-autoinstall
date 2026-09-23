@@ -578,10 +578,8 @@ def _validate_mihomo(mh: Any) -> None:
     for i, r in enumerate(rules):
         if not isinstance(r, str):
             raise SchemaError(f"mihomo.config.rules[{i}] must be a string.")
-    if "proxy-providers" in cfg:
-        raise SchemaError(
-            "mihomo.config: proxy-providers are not supported by the container kill switch; define inline proxies instead."
-        )
+    if "proxy-providers" in cfg and not isinstance(cfg["proxy-providers"], dict):
+        raise SchemaError("mihomo.config.proxy-providers must be an object.")
 
 
 # ---------------------------------------------------------------------------

@@ -593,14 +593,16 @@ if [[ "$OFFLINE_BUNDLE_REFRESH" == "never" ]]; then
     echo "Error: builder image $BUILDER_IMAGE is not available locally and OFFLINE_BUNDLE_REFRESH=never." >&2
     exit 1
   fi
-  if command -v python3 >/dev/null 2>&1; then
-    echo "Verifying offline APT bundle on host..."
-    bash "$WORK_DIR/offline/build-apt-bundle.sh" \
-      "$WORK_DIR/offline/packages.seeds.json" \
-      "$WORK_DIR/offline/packages.lock.json" \
-      "$WORK_DIR/$OFFLINE_BUNDLE_CACHE" \
-      never
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: python3 is required on host for offline bundle verification when OFFLINE_BUNDLE_REFRESH=never." >&2
+    exit 1
   fi
+  echo "Verifying offline APT bundle on host..."
+  bash "$WORK_DIR/offline/build-apt-bundle.sh" \
+    "$WORK_DIR/offline/packages.seeds.json" \
+    "$WORK_DIR/offline/packages.lock.json" \
+    "$WORK_DIR/$OFFLINE_BUNDLE_CACHE" \
+    never
 fi
 
 docker run --rm \

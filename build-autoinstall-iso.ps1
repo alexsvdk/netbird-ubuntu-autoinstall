@@ -570,19 +570,75 @@ try {
                 Write-Error "Error: builder image $BuilderImage is not available locally and OFFLINE_BUNDLE_REFRESH=never."
                 exit 1
             }
-            $pyCmd = Get-Command python3 -ErrorAction SilentlyContinue
-            if (-not $pyCmd) { $pyCmd = Get-Command python -ErrorAction SilentlyContinue }
-            if ($pyCmd) {
-                Write-Host "Verifying offline APT bundle on host..."
-                $verifyPy = "import hashlib, json, sys, pathlib; lock = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')); repo = pathlib.Path(sys.argv[2]); [sys.exit(f'Missing or corrupt: {p[\`"path\`"]}') for p in lock.get('packages', []) if not (repo / p['path']).is_file() or hashlib.sha256((repo / p['path']).read_bytes()).hexdigest() != p['sha256']]"
-                $lockArg = Join-Path $WorkDir "offline\packages.lock.json"
-                $repoArg = Join-Path $WorkDir "$OfflineBundleCache\repository"
-                & $pyCmd.Source -c $verifyPy $lockArg $repoArg
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Offline APT bundle verification failed on host."
+            Write-Host "Verifying offline APT bundle natively on host..."
+            $repoPath = Join-Path $WorkDir "$OfflineBundleCache\repository"
+            $lockPath = Join-Path $WorkDir "offline\packages.lock.json"
+            if (-not (Test-Path -LiteralPath $lockPath)) {
+                Write-Error "Error: offline lock $lockPath does not exist."
+                exit 1
+            }
+            if (-not (Test-Path -LiteralPath $repoPath)) {
+                Write-Error "Error: offline repository $repoPath does not exist."
+                exit 1
+            }
+            $lockJson = Get-Content -LiteralPath $lockPath -Raw -Encoding Utf8 | ConvertFrom-Json
+            if ($lockJson.schema -ne 2 -or $lockJson.state -ne "locked") {
+                Write-Error "Error: offline lock is not generated (state: $($lockJson.state), schema: $($lockJson.schema)); rerun with OFFLINE_BUNDLE_REFRESH=auto."
+                exit 1
+            }
+            if (-not $lockJson.packages -or $lockJson.packages.Count -eq 0) {
+                Write-Error "Error: offline lock contains no packages."
+                exit 1
+            }
+            $inRelease = Join-Path $repoPath "dists\samovar\InRelease"
+            if (-not (Test-Path -LiteralPath $inRelease)) {
+                Write-Error "Error: signed offline repository is missing InRelease: $inRelease"
+                exit 1
+            }
+            $keyring = Join-Path $repoPath "samovar-offline-archive-keyring.gpg"
+            if (-not (Test-Path -LiteralPath $keyring)) {
+                Write-Error "Error: offline repository signing key is missing: $keyring"
+                exit 1
+            }
+            $lockedRelPaths = New-Object System.Collections.Generic.HashSet[string]
+            foreach ($pkg in $lockJson.packages) {
+                $pkgRel = $pkg.path.Replace('/', '\')
+                $pkgFull = Join-Path $repoPath $pkgRel
+                if (-not (Test-Path -LiteralPath $pkgFull)) {
+                    Write-Error "Error: locked package is missing: $($pkg.path)"
+                    exit 1
+                }
+                $hash = (Get-FileHash -LiteralPath $pkgFull -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($hash -ne $pkg.sha256.ToLowerInvariant()) {
+                    Write-Error "Error: SHA-256 mismatch for $($pkg.path): got $hash, expected $($pkg.sha256)"
+                    exit 1
+                }
+                [void]$lockedRelPaths.Add($pkg.path)
+            }
+            $diskDebs = Get-ChildItem -Path $repoPath -Filter "*.deb" -Recurse
+            foreach ($deb in $diskDebs) {
+                $rel = $deb.FullName.Substring($repoPath.Length).TrimStart('\', '/').Replace('\', '/')
+                if (-not $lockedRelPaths.Contains($rel)) {
+                    Write-Error "Error: unlisted .deb file in offline repository: $rel"
                     exit 1
                 }
             }
+            if ($lockJson.metadata) {
+                foreach ($prop in $lockJson.metadata.PSObject.Properties) {
+                    $metaRel = $prop.Name.Replace('/', '\')
+                    $metaFull = Join-Path $repoPath $metaRel
+                    if (-not (Test-Path -LiteralPath $metaFull)) {
+                        Write-Error "Error: locked metadata file missing: $($prop.Name)"
+                        exit 1
+                    }
+                    $hash = (Get-FileHash -LiteralPath $metaFull -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ($hash -ne $prop.Value.ToLowerInvariant()) {
+                        Write-Error "Error: metadata SHA-256 mismatch for $($prop.Name)"
+                        exit 1
+                    }
+                }
+            }
+            Write-Host "Offline APT bundle verified successfully on host."
         }
 
         $bundleScript = @'

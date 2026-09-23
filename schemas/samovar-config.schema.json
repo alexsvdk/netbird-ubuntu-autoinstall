@@ -132,11 +132,7 @@
               "items": {
                 "type": "string"
               }
-            },
-            "proxy-providers": false
-          },
-          "not": {
-            "required": ["proxy-providers"]
+            }
           },
           "additionalProperties": true
         }

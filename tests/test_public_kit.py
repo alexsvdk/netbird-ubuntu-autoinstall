@@ -471,8 +471,12 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("Error: iptables is required", vpn_compose)
         self.assertIn("command -v ip6tables", vpn_compose)
         self.assertIn("Error: ip6tables is required", vpn_compose)
-        # Healthcheck verifies HTTP controller and rejects simple pidof
-        self.assertIn("wget -qO- http://127.0.0.1:9090", vpn_compose)
+        # Shell runs with set -eu for fail-closed firewall execution
+        self.assertIn("set -eu", vpn_compose)
+        # Sidecar explicitly forbids proxy-providers for kill switch integrity
+        self.assertIn("proxy-providers are not supported in VPN sidecar TUN mode", vpn_compose)
+        # Healthcheck verifies TUN interface / controller and rejects simple pidof
+        self.assertIn("ip link show tun0", vpn_compose)
         self.assertNotIn("pidof mihomo", vpn_compose)
         # Dynamic upstream proxy resolution from config.yaml
         self.assertIn("server:", vpn_compose)
