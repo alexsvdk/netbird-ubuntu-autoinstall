@@ -527,6 +527,159 @@ class PublicKitTests(unittest.TestCase):
         never_branch = wrapper.split("else", 1)[1].split("fi", 1)[0]
         self.assertNotIn("apt-get", never_branch)
 
+    def test_vpn_compose_escapes_shell_variables_for_compose(self) -> None:
+        vpn_compose = (ROOT / "provisioning" / "compose-templates" / "vpn.compose.yml").read_text(encoding="utf-8")
+        command_block = vpn_compose.split("command:", 1)[1].split("healthcheck:", 1)[0]
+        self.assertIn('if [ -f "$$CONFIG" ]; then', command_block)
+        self.assertIn('GW="$$(ip route show default', command_block)
+        self.assertIn('if [ -n "$$GW" ]; then', command_block)
+        self.assertIn('iptables -A OUTPUT -d "$$GW" -j ACCEPT', command_block)
+        self.assertIn('for srv in $$(awk', command_block)
+        self.assertIn('line = $$0', command_block)
+        self.assertIn('case "$$srv" in', command_block)
+        self.assertIn('ips="$$(nslookup "$$srv"', command_block)
+        self.assertIn('for ip in $$ips; do', command_block)
+        self.assertIn('iptables -A OUTPUT -d "$$ip" -j ACCEPT', command_block)
+        self.assertIn('iptables -A OUTPUT -d "$$srv" -j ACCEPT', command_block)
+        import re
+        unescaped = re.findall(r'(?<!\$)\$(CONFIG|GW|srv|ips|ip)\b', command_block)
+        self.assertEqual(unescaped, [])
+
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(ROOT / "provisioning" / "compose-templates" / "vpn.compose.yml"), "config"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            self.assertNotIn("variable is not set", result.stderr)
+
+    def test_vpn_compose_proxy_providers_detection_pattern(self) -> None:
+        test_cases = [
+            ("proxy-providers:", True),
+            ("  proxy-providers: {}", True),
+            ("mihomo: {proxy-providers: {remote: {type: http}}}", True),
+            ('{"proxy-providers": {}}', True),
+            ("{'proxy-providers': {}}", True),
+            ('  "proxy-providers"  :', True),
+            ("  'proxy-providers'  :", True),
+            ("proxies:", False),
+            ("  - name: my-proxy-providers-server\n    server: 1.2.3.4", False),
+            ("proxy-providers-allowed: false", False),
+        ]
+        pattern = r"""("proxy-providers"|'proxy-providers'|proxy-providers)[[:space:]]*:"""
+        for text, should_match in test_cases:
+            res = subprocess.run(["grep", "-q", "-i", "-E", pattern], input=text, text=True)
+            matched = (res.returncode == 0)
+            self.assertEqual(matched, should_match, f"Failed for {text}")
+
+    def test_offline_bundle_schema_3_and_metadata_verification(self) -> None:
+        import hashlib
+        import json
+        import tempfile
+
+        lock = json.loads((ROOT / "offline" / "packages.lock.json").read_text(encoding="utf-8"))
+        self.assertEqual(lock.get("schema"), 3)
+
+        build_sh = (ROOT / "offline" / "build-apt-bundle.sh").read_text(encoding="utf-8")
+        self.assertIn('if lock.get("schema") != 3 or lock.get("state") != "locked":', build_sh)
+        self.assertIn('"schema": 3,', build_sh)
+
+        ps1 = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
+        self.assertIn('$lockJson.schema -ne 3 -or $lockJson.state -ne "locked"', ps1)
+        self.assertIn("offline lock metadata is missing or empty", ps1)
+
+        for meta_path in (
+            "dists/samovar/InRelease",
+            "dists/samovar/Release",
+            "samovar-offline-archive-keyring.gpg",
+            "Packages.gz",
+        ):
+            self.assertIn(meta_path, build_sh)
+            self.assertIn(meta_path, ps1)
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            cache = tmp / "cache"
+            repo = cache / "repository"
+            dists = repo / "dists/samovar/main/binary-amd64"
+            dists.mkdir(parents=True)
+
+            in_rel = repo / "dists/samovar/InRelease"
+            in_rel.write_bytes(b"InRelease")
+            rel = repo / "dists/samovar/Release"
+            rel.write_bytes(b"Release")
+            pkg = dists / "Packages"
+            pkg.write_bytes(b"Packages")
+            pkg_gz = dists / "Packages.gz"
+            pkg_gz.write_bytes(b"Packages.gz")
+            key = repo / "samovar-offline-archive-keyring.gpg"
+            key.write_bytes(b"Keyring")
+
+            deb = repo / "pool/test.deb"
+            deb.parent.mkdir(parents=True)
+            deb.write_bytes(b"deb")
+            deb_hash = hashlib.sha256(b"deb").hexdigest()
+
+            meta = {
+                "dists/samovar/InRelease": hashlib.sha256(in_rel.read_bytes()).hexdigest(),
+                "dists/samovar/Release": hashlib.sha256(rel.read_bytes()).hexdigest(),
+                "dists/samovar/main/binary-amd64/Packages": hashlib.sha256(pkg.read_bytes()).hexdigest(),
+                "dists/samovar/main/binary-amd64/Packages.gz": hashlib.sha256(pkg_gz.read_bytes()).hexdigest(),
+                "samovar-offline-archive-keyring.gpg": hashlib.sha256(key.read_bytes()).hexdigest(),
+            }
+
+            seeds = tmp / "seeds.json"
+            seeds.write_text(json.dumps({
+                "schema": 2,
+                "target": {"release": "26.04", "codename": "resolute", "architecture": "amd64"}
+            }))
+            lock_file = tmp / "packages.lock.json"
+
+            def run_verify(lock_dict: dict) -> tuple[int, str, str]:
+                lock_file.write_text(json.dumps(lock_dict))
+                p = subprocess.run(
+                    ["bash", str(ROOT / "offline" / "build-apt-bundle.sh"), str(seeds), str(lock_file), str(cache), "never"],
+                    capture_output=True,
+                    text=True,
+                )
+                return p.returncode, p.stdout, p.stderr
+
+            # Schema 2 rejected
+            rc, _, err = run_verify({"schema": 2, "state": "locked", "packages": [{"path": "pool/test.deb", "sha256": deb_hash}], "metadata": meta})
+            self.assertNotEqual(rc, 0)
+            self.assertIn("offline lock is not generated", err)
+
+            # Missing metadata rejected
+            rc, _, err = run_verify({"schema": 3, "state": "locked", "packages": [{"path": "pool/test.deb", "sha256": deb_hash}]})
+            self.assertNotEqual(rc, 0)
+            self.assertIn("metadata is missing or empty", err)
+
+            # Missing key rejected
+            meta_missing = dict(meta)
+            del meta_missing["dists/samovar/Release"]
+            rc, _, err = run_verify({"schema": 3, "state": "locked", "packages": [{"path": "pool/test.deb", "sha256": deb_hash}], "metadata": meta_missing})
+            self.assertNotEqual(rc, 0)
+            self.assertIn("missing", err)
+
+            # Extra key rejected
+            meta_extra = dict(meta)
+            meta_extra["extra/path"] = "bad"
+            rc, _, err = run_verify({"schema": 3, "state": "locked", "packages": [{"path": "pool/test.deb", "sha256": deb_hash}], "metadata": meta_extra})
+            self.assertNotEqual(rc, 0)
+            self.assertIn("unexpected", err)
+
+            # Corrupted hash rejected
+            meta_bad = dict(meta)
+            meta_bad["dists/samovar/InRelease"] = "wronghash"
+            rc, _, err = run_verify({"schema": 3, "state": "locked", "packages": [{"path": "pool/test.deb", "sha256": deb_hash}], "metadata": meta_bad})
+            self.assertNotEqual(rc, 0)
+            self.assertIn("metadata SHA-256 mismatch", err)
+
+            # Valid schema 3 succeeds
+            rc, out, _ = run_verify({"schema": 3, "state": "locked", "packages": [{"path": "pool/test.deb", "sha256": deb_hash}], "metadata": meta})
+            self.assertEqual(rc, 0)
+            self.assertIn("Using verified offline APT bundle", out)
+
 
 if __name__ == "__main__":
     unittest.main()

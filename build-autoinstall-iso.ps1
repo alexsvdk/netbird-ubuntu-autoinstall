@@ -582,7 +582,7 @@ try {
                 exit 1
             }
             $lockJson = Get-Content -LiteralPath $lockPath -Raw -Encoding Utf8 | ConvertFrom-Json
-            if ($lockJson.schema -ne 2 -or $lockJson.state -ne "locked") {
+            if ($lockJson.schema -ne 3 -or $lockJson.state -ne "locked") {
                 Write-Error "Error: offline lock is not generated (state: $($lockJson.state), schema: $($lockJson.schema)); rerun with OFFLINE_BUNDLE_REFRESH=auto."
                 exit 1
             }
@@ -590,16 +590,47 @@ try {
                 Write-Error "Error: offline lock contains no packages."
                 exit 1
             }
-            $inRelease = Join-Path $repoPath "dists\samovar\InRelease"
-            if (-not (Test-Path -LiteralPath $inRelease)) {
-                Write-Error "Error: signed offline repository is missing InRelease: $inRelease"
+            if (-not $lockJson.metadata -or $lockJson.metadata.PSObject.Properties.Count -eq 0) {
+                Write-Error "Error: offline lock metadata is missing or empty."
                 exit 1
             }
-            $keyring = Join-Path $repoPath "samovar-offline-archive-keyring.gpg"
-            if (-not (Test-Path -LiteralPath $keyring)) {
-                Write-Error "Error: offline repository signing key is missing: $keyring"
-                exit 1
+
+            $targetArch = if ($lockJson.target -and $lockJson.target.architecture) { $lockJson.target.architecture } else { $Arch }
+            $expectedMeta = @(
+                "dists/samovar/InRelease",
+                "dists/samovar/Release",
+                "dists/samovar/main/binary-$targetArch/Packages",
+                "dists/samovar/main/binary-$targetArch/Packages.gz",
+                "samovar-offline-archive-keyring.gpg"
+            )
+            $actualMetaProps = @($lockJson.metadata.PSObject.Properties | ForEach-Object { $_.Name })
+            foreach ($exp in $expectedMeta) {
+                if ($actualMetaProps -notcontains $exp) {
+                    Write-Error "Error: locked metadata is missing required key: $exp"
+                    exit 1
+                }
             }
+            foreach ($act in $actualMetaProps) {
+                if ($expectedMeta -notcontains $act) {
+                    Write-Error "Error: locked metadata contains unexpected key: $act"
+                    exit 1
+                }
+            }
+
+            foreach ($prop in $lockJson.metadata.PSObject.Properties) {
+                $metaRel = $prop.Name.Replace('/', '\')
+                $metaFull = Join-Path $repoPath $metaRel
+                if (-not (Test-Path -LiteralPath $metaFull)) {
+                    Write-Error "Error: locked metadata file missing: $($prop.Name)"
+                    exit 1
+                }
+                $hash = (Get-FileHash -LiteralPath $metaFull -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($hash -ne $prop.Value.ToLowerInvariant()) {
+                    Write-Error "Error: metadata SHA-256 mismatch for $($prop.Name)"
+                    exit 1
+                }
+            }
+
             $lockedRelPaths = New-Object System.Collections.Generic.HashSet[string]
             foreach ($pkg in $lockJson.packages) {
                 $pkgRel = $pkg.path.Replace('/', '\')
@@ -621,21 +652,6 @@ try {
                 if (-not $lockedRelPaths.Contains($rel)) {
                     Write-Error "Error: unlisted .deb file in offline repository: $rel"
                     exit 1
-                }
-            }
-            if ($lockJson.metadata) {
-                foreach ($prop in $lockJson.metadata.PSObject.Properties) {
-                    $metaRel = $prop.Name.Replace('/', '\')
-                    $metaFull = Join-Path $repoPath $metaRel
-                    if (-not (Test-Path -LiteralPath $metaFull)) {
-                        Write-Error "Error: locked metadata file missing: $($prop.Name)"
-                        exit 1
-                    }
-                    $hash = (Get-FileHash -LiteralPath $metaFull -Algorithm SHA256).Hash.ToLowerInvariant()
-                    if ($hash -ne $prop.Value.ToLowerInvariant()) {
-                        Write-Error "Error: metadata SHA-256 mismatch for $($prop.Name)"
-                        exit 1
-                    }
                 }
             }
             Write-Host "Offline APT bundle verified successfully on host."

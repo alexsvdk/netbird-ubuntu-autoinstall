@@ -51,28 +51,52 @@ if [[ -n "${UBUNTU_SERIES:-}" && "$UBUNTU_SERIES" != "$TARGET_RELEASE" ]]; then
 fi
 
 verify_locked_repository() {
-  python3 - "$LOCK_FILE" "$REPOSITORY" <<'PY'
+  python3 - "$LOCK_FILE" "$REPOSITORY" "$TARGET_ARCH" <<'PY'
 import hashlib
 import json
 import sys
 from pathlib import Path
 
-lock_path, repository = map(Path, sys.argv[1:])
+lock_path = Path(sys.argv[1])
+repository = Path(sys.argv[2])
+cli_target_arch = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+
 try:
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
 except (OSError, json.JSONDecodeError) as error:
     raise SystemExit(f"Error: cannot read offline lock: {error}")
 
-if lock.get("schema") != 2 or lock.get("state") != "locked":
+if lock.get("schema") != 3 or lock.get("state") != "locked":
     raise SystemExit("Error: offline lock is not generated; rerun with OFFLINE_BUNDLE_REFRESH=auto.")
 if not lock.get("packages"):
     raise SystemExit("Error: offline lock contains no packages.")
-if not (repository / "dists/samovar/InRelease").is_file():
-    raise SystemExit("Error: signed offline repository is missing InRelease.")
-if not (repository / "samovar-offline-archive-keyring.gpg").is_file():
-    raise SystemExit("Error: offline repository signing key is missing.")
 
-metadata = lock.get("metadata", {})
+metadata = lock.get("metadata")
+if not isinstance(metadata, dict) or not metadata:
+    raise SystemExit("Error: offline lock metadata is missing or empty.")
+
+target_arch = cli_target_arch or (lock.get("target") or {}).get("architecture")
+if not target_arch:
+    raise SystemExit("Error: target architecture unknown for metadata verification.")
+
+expected_meta_keys = {
+    "dists/samovar/InRelease",
+    "dists/samovar/Release",
+    f"dists/samovar/main/binary-{target_arch}/Packages",
+    f"dists/samovar/main/binary-{target_arch}/Packages.gz",
+    "samovar-offline-archive-keyring.gpg",
+}
+actual_meta_keys = set(metadata.keys())
+if actual_meta_keys != expected_meta_keys:
+    missing = expected_meta_keys - actual_meta_keys
+    extra = actual_meta_keys - expected_meta_keys
+    msg = []
+    if missing:
+        msg.append(f"missing {sorted(missing)}")
+    if extra:
+        msg.append(f"unexpected {sorted(extra)}")
+    raise SystemExit(f"Error: locked metadata keys mismatch: {'; '.join(msg)}")
+
 for rel_path, expected_hash in metadata.items():
     meta_file = repository / rel_path
     if not meta_file.is_file():
@@ -305,19 +329,21 @@ staging = Path(staging_dir)
 seeds = json.loads(Path(seeds_path).read_text(encoding="utf-8"))
 
 metadata = {}
-for m_rel in (
+required_meta = (
     "dists/samovar/InRelease",
     "dists/samovar/Release",
     f"dists/samovar/main/binary-{target_arch}/Packages",
     f"dists/samovar/main/binary-{target_arch}/Packages.gz",
     "samovar-offline-archive-keyring.gpg",
-):
+)
+for m_rel in required_meta:
     mp = staging / m_rel
-    if mp.is_file():
-        metadata[m_rel] = hashlib.sha256(mp.read_bytes()).hexdigest()
+    if not mp.is_file():
+        raise SystemExit(f"Error: required offline metadata file not generated: {m_rel}")
+    metadata[m_rel] = hashlib.sha256(mp.read_bytes()).hexdigest()
 
 lock = {
-    "schema": 2,
+    "schema": 3,
     "state": "locked",
     "generated_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat(),
     "generated_from": "offline/packages.seeds.json",

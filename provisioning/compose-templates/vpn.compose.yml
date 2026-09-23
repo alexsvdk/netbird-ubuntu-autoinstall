@@ -38,8 +38,8 @@ services:
 
         # VPN sidecar requires static inline proxies for fail-closed firewall isolation.
         CONFIG="/root/.config/mihomo/config.yaml"
-        if [ -f "$CONFIG" ]; then
-          if grep -q -E '^[[:space:]]*proxy-providers:' "$CONFIG" 2>/dev/null; then
+        if [ -f "$$CONFIG" ]; then
+          if grep -q -i -E '("proxy-providers"|'\''proxy-providers'\''|proxy-providers)[[:space:]]*:' "$$CONFIG" 2>/dev/null; then
             echo "Error: proxy-providers are not supported in VPN sidecar TUN mode. Define all endpoints under 'proxies:' in mihomo-vpn.yaml." >&2
             exit 1
           fi
@@ -64,37 +64,37 @@ services:
         iptables -A OUTPUT -p tcp -d 127.0.0.11 --dport 53 -j ACCEPT
 
         # Allow container default gateway
-        GW="$(ip route show default 2>/dev/null | awk '/default/ {print $3}' | head -n1)"
-        if [ -n "$GW" ]; then
-          iptables -A OUTPUT -d "$GW" -j ACCEPT
+        GW="$$(ip route show default 2>/dev/null | awk '/default/ {print $$3}' | head -n1)"
+        if [ -n "$$GW" ]; then
+          iptables -A OUTPUT -d "$$GW" -j ACCEPT
         fi
 
         # Allow upstream proxy endpoints from Mihomo configuration
         # Handles block YAML (server: ...) and inline YAML ({... server: ...})
         CONFIG="/root/.config/mihomo/config.yaml"
-        if [ -f "$CONFIG" ]; then
-          for srv in $(awk '
+        if [ -f "$$CONFIG" ]; then
+          for srv in $$(awk '
           {
-            line = $0
+            line = $$0
             while (match(line, /server:[[:space:]]*["\047]?([a-zA-Z0-9._-]+)/)) {
               s = substr(line, RSTART, RLENGTH)
               sub(/server:[[:space:]]*["\047]?/, "", s)
               print s
               line = substr(line, RSTART + RLENGTH)
             }
-          }' "$CONFIG" 2>/dev/null); do
-            case "$srv" in
+          }' "$$CONFIG" 2>/dev/null); do
+            case "$$srv" in
               *[!0-9.]*)
-                ips="$(nslookup "$srv" 127.0.0.11 2>/dev/null | awk '/^Address:[[:space:]]+[0-9]/ {print $2}' || true)"
-                if [ -z "$ips" ]; then
-                  ips="$(getent hosts "$srv" 2>/dev/null | awk '{print $1}' || true)"
+                ips="$$(nslookup "$$srv" 127.0.0.11 2>/dev/null | awk '/^Address:[[:space:]]+[0-9]/ {print $$2}' || true)"
+                if [ -z "$$ips" ]; then
+                  ips="$$(getent hosts "$$srv" 2>/dev/null | awk '{print $$1}' || true)"
                 fi
-                for ip in $ips; do
-                  iptables -A OUTPUT -d "$ip" -j ACCEPT
+                for ip in $$ips; do
+                  iptables -A OUTPUT -d "$$ip" -j ACCEPT
                 done
                 ;;
               *)
-                iptables -A OUTPUT -d "$srv" -j ACCEPT
+                iptables -A OUTPUT -d "$$srv" -j ACCEPT
                 ;;
             esac
           done
