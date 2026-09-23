@@ -270,4 +270,8 @@ Host-инстанс работает без `network_mode: host` и публик
      ```
 3. **Полный туннель (Full TUN / VPN)** — изоляция через сетевой неймспейс sidecar-контейнера Mihomo с kill-switch:
    - Файл: `provisioning/compose-templates/vpn.compose.yml`
-   - При отказе VPN трафик наружу не утекает. Доступ к GPU RTX 3060 пробрасывается напрямую в контейнер приложения.
+   - Конфигурация `./mihomo-vpn.yaml` генерируется из проверенного JSON (inline `proxies:`, без динамических `proxy-providers`):
+     ```bash
+     python3 provisioning/render-vpn-config.py samovar-config.json mihomo-vpn.yaml
+     ```
+   - При отказе VPN трафик наружу не утекает (fail-closed kill switch). Доступ к GPU RTX 3060 пробрасывается напрямую в контейнер приложения.

@@ -37,10 +37,20 @@ services:
         set -eu
 
         # VPN sidecar requires static inline proxies for fail-closed firewall isolation.
+        # Arbitrary YAML (including YAML anchors, aliases, and escape sequences) is strictly
+        # rejected to prevent semantic bypass of provider restrictions.
+        # Configurations should be generated from validated JSON via render-vpn-config.py.
         CONFIG="/root/.config/mihomo/config.yaml"
         if [ -f "$$CONFIG" ]; then
-          if grep -q -i -E '("proxy-providers"|'\''proxy-providers'\''|proxy-providers)[[:space:]]*:' "$$CONFIG" 2>/dev/null; then
+          # 1. Reject explicit proxy-providers in any quoted, flow, or block form
+          if grep -q -i -E "['\"]?proxy[-_ ]*providers['\"]?[[:space:]]*:" "$$CONFIG" 2>/dev/null; then
             echo "Error: proxy-providers are not supported in VPN sidecar TUN mode. Define all endpoints under 'proxies:' in mihomo-vpn.yaml." >&2
+            exit 1
+          fi
+
+          # 2. Reject YAML obfuscation and semantic bypass (escapes, anchors, aliases, tags, merge keys)
+          if grep -q -E '(\\[uUx0-7]|&[a-zA-Z0-9_-]+|\*[a-zA-Z0-9_-]+|![a-zA-Z0-9_-]+|^[[:space:]]*\?|^[[:space:]]*<<)' "$$CONFIG" 2>/dev/null; then
+            echo "Error: YAML escapes, anchors, aliases, tags, and merge keys are not permitted in VPN sidecar TUN mode. Generate config from validated JSON via render-vpn-config.py or define standard inline proxies." >&2
             exit 1
           fi
         fi
@@ -70,15 +80,15 @@ services:
         fi
 
         # Allow upstream proxy endpoints from Mihomo configuration
-        # Handles block YAML (server: ...) and inline YAML ({... server: ...})
+        # Handles block YAML (server: ...), JSON ("server": ...), and inline YAML ({... server: ...})
         CONFIG="/root/.config/mihomo/config.yaml"
         if [ -f "$$CONFIG" ]; then
           for srv in $$(awk '
           {
             line = $$0
-            while (match(line, /server:[[:space:]]*["\047]?([a-zA-Z0-9._-]+)/)) {
+            while (match(line, /["\047]?server["\047]?:[[:space:]]*["\047]?([a-zA-Z0-9._-]+)/)) {
               s = substr(line, RSTART, RLENGTH)
-              sub(/server:[[:space:]]*["\047]?/, "", s)
+              sub(/["\047]?server["\047]?:[[:space:]]*["\047]?/, "", s)
               print s
               line = substr(line, RSTART + RLENGTH)
             }
@@ -117,7 +127,7 @@ services:
 
         exec /mihomo -d /root/.config/mihomo
     healthcheck:
-      test: ["CMD-SHELL", "ip link show tun0 >/dev/null 2>&1 || ip link show Meta >/dev/null 2>&1 || (wget -S --spider -T 2 http://127.0.0.1:9090 2>&1 | grep -q 'HTTP/.*[24]0[0-9]') || exit 1"]
+      test: ["CMD-SHELL", "(ip link show tun0 >/dev/null 2>&1 || ip link show Meta >/dev/null 2>&1) && (wget -S --spider -T 2 http://127.0.0.1:9090 2>&1 | grep -q 'HTTP/.*[24]0[0-9]') || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
