@@ -595,7 +595,7 @@ if [[ "$OFFLINE_BUNDLE_REFRESH" == "never" ]]; then
   fi
   if command -v python3 >/dev/null 2>&1; then
     echo "Verifying offline APT bundle on host..."
-    python3 "$WORK_DIR/offline/build-apt-bundle.sh" \
+    bash "$WORK_DIR/offline/build-apt-bundle.sh" \
       "$WORK_DIR/offline/packages.seeds.json" \
       "$WORK_DIR/offline/packages.lock.json" \
       "$WORK_DIR/$OFFLINE_BUNDLE_CACHE" \

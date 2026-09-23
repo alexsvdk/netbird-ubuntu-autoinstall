@@ -574,11 +574,14 @@ try {
             if (-not $pyCmd) { $pyCmd = Get-Command python -ErrorAction SilentlyContinue }
             if ($pyCmd) {
                 Write-Host "Verifying offline APT bundle on host..."
-                & $pyCmd.Source (Join-Path $WorkDir "offline\build-apt-bundle.sh") `
-                    (Join-Path $WorkDir "offline\packages.seeds.json") `
-                    (Join-Path $WorkDir "offline\packages.lock.json") `
-                    (Join-Path $WorkDir $OfflineBundleCache) `
-                    "never"
+                $verifyPy = "import hashlib, json, sys, pathlib; lock = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')); repo = pathlib.Path(sys.argv[2]); [sys.exit(f'Missing or corrupt: {p[\`"path\`"]}') for p in lock.get('packages', []) if not (repo / p['path']).is_file() or hashlib.sha256((repo / p['path']).read_bytes()).hexdigest() != p['sha256']]"
+                $lockArg = Join-Path $WorkDir "offline\packages.lock.json"
+                $repoArg = Join-Path $WorkDir "$OfflineBundleCache\repository"
+                & $pyCmd.Source -c $verifyPy $lockArg $repoArg
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Error "Offline APT bundle verification failed on host."
+                    exit 1
+                }
             }
         }
 
