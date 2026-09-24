@@ -6,6 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 POWERSHELL = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
+BUNDLE = (ROOT / "offline" / "build-apt-bundle.sh").read_text(encoding="utf-8")
 BATCH = (ROOT / "build-autoinstall-iso.bat").read_text(encoding="utf-8")
 
 
@@ -34,6 +35,10 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn("sed 's/\\r$//' /work/offline/build-apt-bundle.sh", POWERSHELL)
         self.assertNotIn("$BuilderImage bash -euc $bundleScript", POWERSHELL)
         self.assertIn("Remove-Item $bundleScriptPath", POWERSHELL)
+
+    def test_external_apt_rows_preserve_empty_components(self) -> None:
+        self.assertIn("IFS=$'\\x1f' read -r name repository suite component key_url", BUNDLE)
+        self.assertIn('print("\\x1f".join(', BUNDLE)
 
     def test_batch_entrypoint_uses_powershell_script(self) -> None:
         self.assertIn("build-autoinstall-iso.ps1", BATCH)

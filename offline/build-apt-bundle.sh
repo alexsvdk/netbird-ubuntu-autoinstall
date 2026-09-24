@@ -182,14 +182,14 @@ fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl gnupg >/dev/null
 
 add_external_sources() {
-  python3 - "$SEEDS_FILE" <<'PY' | while IFS=$'\t' read -r name repository suite component key_url; do
+  python3 - "$SEEDS_FILE" <<'PY' | while IFS=$'\x1f' read -r name repository suite component key_url; do
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as source:
     repositories = json.load(source)["external_apt"]
 for name, repository in repositories.items():
-    print("\t".join((name, repository["repository"], repository["suite"], repository["component"], repository["key_url"])))
+    print("\x1f".join((name, repository["repository"], repository["suite"], repository["component"], repository["key_url"])))
 PY
     keyring="/usr/share/keyrings/samovar-${name}.gpg"
     curl -fsSL "$key_url" | gpg --dearmor --yes -o "$keyring"
