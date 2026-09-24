@@ -40,6 +40,7 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn("IFS=$'\\x1f' read -r name repository suite component key_url", BUNDLE)
         self.assertIn('print("\\x1f".join(', BUNDLE)
         self.assertIn("--retry 5 --retry-all-errors", BUNDLE)
+        self.assertIn('"--showformat=${Package}\\n${Version}\\n${Architecture}\\n"', BUNDLE)
 
     def test_batch_entrypoint_uses_powershell_script(self) -> None:
         self.assertIn("build-autoinstall-iso.ps1", BATCH)

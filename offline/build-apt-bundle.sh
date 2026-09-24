@@ -246,7 +246,12 @@ for line in simulation.read_text(encoding="utf-8").splitlines():
 packages = []
 for deb in sorted(downloads.glob("*.deb")):
     fields = subprocess.check_output(
-        ["dpkg-deb", "-f", str(deb), "Package", "Version", "Architecture"],
+        [
+            "dpkg-deb",
+            "-W",
+            "--showformat=${Package}\n${Version}\n${Architecture}\n",
+            str(deb),
+        ],
         text=True,
     ).splitlines()
     if len(fields) != 3 or (fields[0], fields[1]) not in selected:
