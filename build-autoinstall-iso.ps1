@@ -81,6 +81,63 @@ function Assert-Tool([string]$cmdName) {
 
 Assert-Tool "docker"
 
+function Test-DockerDaemon {
+    & docker info --format '{{.ServerVersion}}' >$null 2>&1
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-DockerDaemon {
+    if (Test-DockerDaemon) { return }
+
+    if ($env:OS -ne "Windows_NT") {
+        Write-Error "Error: Docker daemon is not running. Start Docker and retry."
+        exit 1
+    }
+
+    Write-Host "Docker Desktop is installed but its Linux engine is not ready. Starting Docker Desktop..."
+    $startRequested = $false
+
+    # Docker Desktop's CLI is available in recent releases. Keep a fallback for
+    # older installations and for Windows PowerShell 5.1.
+    & docker desktop start >$null 2>&1
+    if ($LASTEXITCODE -eq 0) { $startRequested = $true }
+
+    if (-not $startRequested) {
+        $dockerDesktopPaths = @(
+            (Join-Path ${env:ProgramFiles} "Docker\Docker\Docker Desktop.exe"),
+            (Join-Path ${env:LocalAppData} "Docker\Docker Desktop.exe")
+        )
+        $dockerDesktopPath = $dockerDesktopPaths |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+            Select-Object -First 1
+        if ($dockerDesktopPath) {
+            $desktopProcess = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
+            if (-not $desktopProcess) {
+                Start-Process -FilePath $dockerDesktopPath | Out-Null
+            }
+            $startRequested = $true
+        }
+    }
+
+    if (-not $startRequested) {
+        Write-Error "Error: Docker Desktop is not installed or could not be started. Install/start Docker Desktop, then retry."
+        exit 1
+    }
+
+    for ($attempt = 1; $attempt -le 90; $attempt++) {
+        if (Test-DockerDaemon) {
+            Write-Host "Docker Desktop Linux engine is ready."
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Write-Error "Error: Docker Desktop did not make its Linux engine ready within 180 seconds. Run 'docker info', start Docker Desktop, and retry."
+    exit 1
+}
+
+Ensure-DockerDaemon
+
 $CurlCmd = Get-Command "curl.exe" -ErrorAction SilentlyContinue
 if (-not $CurlCmd) {
     $CurlCmd = Get-Command "curl" -ErrorAction SilentlyContinue

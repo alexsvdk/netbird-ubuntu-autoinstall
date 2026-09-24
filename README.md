@@ -137,6 +137,10 @@ chmod +x build-autoinstall-iso.sh
 .\build-autoinstall-iso.ps1
 ```
 
+The PowerShell build checks the Docker Desktop Linux engine and starts Docker Desktop
+when it is installed but not running. It waits up to 180 seconds for the engine;
+this also applies when the script is started through `ssh` on the Windows host.
+
 **Windows (CMD / Command Prompt / Double-click):**
 ```cmd
 build-autoinstall-iso.bat
