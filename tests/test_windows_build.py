@@ -41,6 +41,7 @@ class TestWindowsDockerPreflight(unittest.TestCase):
     def test_external_apt_rows_preserve_empty_components(self) -> None:
         self.assertIn("IFS=$'\\x1f' read -r name repository suite component key_url", BUNDLE)
         self.assertIn('print("\\x1f".join(', BUNDLE)
+        self.assertIn("--http1.1 -fsSL", BUNDLE)
         self.assertIn("--retry 5 --retry-all-errors", BUNDLE)
         self.assertIn('"--showformat=${Package}\\n${Version}\\n${Architecture}\\n"', BUNDLE)
         self.assertIn('nvidia_prefix = "linux-modules-nvidia-595-open-"', BUNDLE)
