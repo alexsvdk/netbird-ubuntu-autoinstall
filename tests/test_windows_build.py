@@ -22,6 +22,8 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn('Docker\\Docker\\Docker Desktop.exe', POWERSHELL)
         self.assertIn("Start-Sleep -Seconds 2", POWERSHELL)
         self.assertIn("within 180 seconds", POWERSHELL)
+        self.assertIn("docker --config $DockerConfigPath pull", POWERSHELL)
+        self.assertIn('{"auths":{}}', POWERSHELL)
 
     def test_preflight_runs_before_the_build(self) -> None:
         self.assertLess(
