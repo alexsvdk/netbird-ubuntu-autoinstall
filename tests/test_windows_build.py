@@ -31,6 +31,7 @@ class TestWindowsDockerPreflight(unittest.TestCase):
     def test_bundle_script_is_mounted_as_a_file(self) -> None:
         self.assertIn(".autoinstall-bundle.tmp.sh", POWERSHELL)
         self.assertIn("bash /work/.autoinstall-bundle.tmp.sh", POWERSHELL)
+        self.assertIn("sed 's/\\r$//' /work/offline/build-apt-bundle.sh", POWERSHELL)
         self.assertNotIn("$BuilderImage bash -euc $bundleScript", POWERSHELL)
         self.assertIn("Remove-Item $bundleScriptPath", POWERSHELL)
 

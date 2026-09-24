@@ -737,7 +737,9 @@ else
         DEBIAN_FRONTEND=noninteractive ${APT_CMD}-get install -y -qq python3 >/dev/null
     fi
 fi
-bash /work/offline/build-apt-bundle.sh \
+# Windows Git checkouts may give this mounted script CRLF line endings.
+sed 's/\r$//' /work/offline/build-apt-bundle.sh > /tmp/build-apt-bundle.sh
+bash /tmp/build-apt-bundle.sh \
     /work/offline/packages.seeds.json \
     /work/offline/packages.lock.json \
     "/work/$OFFLINE_BUNDLE_CACHE" \
