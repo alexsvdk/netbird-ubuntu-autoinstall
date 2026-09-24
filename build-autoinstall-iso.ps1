@@ -625,7 +625,7 @@ $DockerWorkDir = $WorkDir.Replace('\', '/')
 $step1Path = Join-Path $WorkDir ".autoinstall-step1.tmp.sh"
 $step2Path = Join-Path $WorkDir ".autoinstall-step2.tmp.sh"
 $bundleScriptPath = Join-Path $WorkDir ".autoinstall-bundle.tmp.sh"
-$DockerConfigPath = Join-Path $WorkDir ".docker-build-config"
+$DockerCredentialHelperPath = Join-Path $WorkDir ".docker-build-credential-helper"
 
 try {
         Write-Host "Offline bundle: refresh=$OfflineBundleRefresh"
@@ -794,16 +794,37 @@ bash /tmp/build-apt-bundle.sh \
             }
         } else {
             New-Item -ItemType Directory -Force -Path $artifactCachePath | Out-Null
-            # Docker Desktop's credential helper needs an interactive logon
-            # session, which is unavailable when this build runs over SSH.
-            New-Item -ItemType Directory -Force -Path $DockerConfigPath | Out-Null
-            [System.IO.File]::WriteAllText(
-                (Join-Path $DockerConfigPath "config.json"),
-                '{"auths":{}}',
-                $Utf8NoBom
-            )
-            & docker --config $DockerConfigPath pull --platform linux/amd64 $MihomoImage
-            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to pull Mihomo image."; exit 1 }
+            & docker pull --platform linux/amd64 $MihomoImage
+            $pullExitCode = $LASTEXITCODE
+            if ($pullExitCode -ne 0) {
+                # Docker Desktop's credential helper needs an interactive logon
+                # session, which is unavailable when this build runs over SSH.
+                # Retry anonymously so public images still work; the first pull
+                # remains available for private images with valid credentials.
+                Write-Host "Docker image pull failed; retrying with anonymous credentials..."
+                New-Item -ItemType Directory -Force -Path $DockerCredentialHelperPath | Out-Null
+                $credentialHelper = @(
+                    '@echo off',
+                    'if /I "%1"=="get" echo {"Username":"","Secret":""}',
+                    'if /I "%1"=="list" echo {}',
+                    'if /I "%1"=="erase" exit /b 0',
+                    'if /I "%1"=="store" exit /b 0'
+                )
+                [System.IO.File]::WriteAllLines(
+                    (Join-Path $DockerCredentialHelperPath "docker-credential-desktop.cmd"),
+                    $credentialHelper,
+                    [System.Text.Encoding]::ASCII
+                )
+                $originalPath = $env:PATH
+                try {
+                    $env:PATH = "$DockerCredentialHelperPath;$originalPath"
+                    & docker pull --platform linux/amd64 $MihomoImage
+                    $pullExitCode = $LASTEXITCODE
+                } finally {
+                    $env:PATH = $originalPath
+                }
+            }
+            if ($pullExitCode -ne 0) { Write-Error "Failed to pull Mihomo image."; exit 1 }
             $mihomoDigest = (& docker image inspect $MihomoImage --format '{{index .RepoDigests 0}}').Trim()
             if ($mihomoDigest -notmatch '@sha256:') { Write-Error "Docker did not report an immutable Mihomo digest."; exit 1 }
             & docker save --output $artifactTar $mihomoDigest
@@ -1044,5 +1065,5 @@ finally {
     if (Test-Path $step1Path) { Remove-Item $step1Path -Force -ErrorAction SilentlyContinue }
     if (Test-Path $step2Path) { Remove-Item $step2Path -Force -ErrorAction SilentlyContinue }
     if (Test-Path $bundleScriptPath) { Remove-Item $bundleScriptPath -Force -ErrorAction SilentlyContinue }
-    if (Test-Path $DockerConfigPath) { Remove-Item $DockerConfigPath -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $DockerCredentialHelperPath) { Remove-Item $DockerCredentialHelperPath -Recurse -Force -ErrorAction SilentlyContinue }
 }

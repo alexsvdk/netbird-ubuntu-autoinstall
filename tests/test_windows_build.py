@@ -22,8 +22,10 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn('Docker\\Docker\\Docker Desktop.exe', POWERSHELL)
         self.assertIn("Start-Sleep -Seconds 2", POWERSHELL)
         self.assertIn("within 180 seconds", POWERSHELL)
-        self.assertIn("docker --config $DockerConfigPath pull", POWERSHELL)
-        self.assertIn('{"auths":{}}', POWERSHELL)
+        self.assertIn("DockerCredentialHelperPath", POWERSHELL)
+        self.assertIn("retrying with anonymous credentials", POWERSHELL)
+        self.assertIn("docker-credential-desktop.cmd", POWERSHELL)
+        self.assertIn("$pullExitCode", POWERSHELL)
 
     def test_preflight_runs_before_the_build(self) -> None:
         self.assertLess(
