@@ -43,8 +43,13 @@ function Load-EnvFile([string]$path) {
             $key = $matches[1].Trim()
             $val = $matches[2].Trim()
 
-            # Strip matching quotes
-            if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+            # Strip matching quotes and unescape quotes in double-quoted values.
+            if ($val.StartsWith('"') -and $val.EndsWith('"')) {
+                if ($val.Length -ge 2) {
+                    $val = $val.Substring(1, $val.Length - 2)
+                    $val = $val -replace '\\"', '"'
+                }
+            } elseif ($val.StartsWith("'") -and $val.EndsWith("'")) {
                 if ($val.Length -ge 2) {
                     $val = $val.Substring(1, $val.Length - 2)
                 }
@@ -609,6 +614,7 @@ if ([System.IO.Path]::IsPathRooted($OfflineArtifactCache) -or $OfflineArtifactCa
 $env:MIHOMO_IMAGE = $MihomoImage
 $SamovarConfigFile = if ($env:SAMOVAR_CONFIG_FILE) { $env:SAMOVAR_CONFIG_FILE } else { "samovar-config.json" }
 $AllowedSigners = if ($env:ALLOWED_SIGNERS) { $env:ALLOWED_SIGNERS } else { "" }
+$AllowedSignersB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($AllowedSigners))
 $SshPublicKeys = if ($env:SSH_PUBLIC_KEYS) { $env:SSH_PUBLIC_KEYS } else { $SshPublicKey }
 $SudoNoPasswd = if ($env:SUDO_NOPASSWD) { $env:SUDO_NOPASSWD } else { "true" }
 
@@ -883,6 +889,11 @@ fi
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssl python3 python3-yaml python3-jsonschema openssh-client >/dev/null
 
+if [ -n "${ALLOWED_SIGNERS_B64:-}" ]; then
+  export ALLOWED_SIGNERS
+  ALLOWED_SIGNERS="$(printf '%s' "$ALLOWED_SIGNERS_B64" | base64 -d)"
+fi
+
 export PASSWORD_HASH
 PASSWORD_HASH="$(openssl passwd -6 "$PASSWORD")"
 
@@ -914,7 +925,7 @@ trap - EXIT
       -e "MIHOMO_IMAGE=$MihomoImage" `
       -e "SAMOVAR_MODE=$SamovarMode" `
       -e "SAMOVAR_CONFIG_FILE=$SamovarConfigFile" `
-      -e "ALLOWED_SIGNERS=$AllowedSigners" `
+      -e "ALLOWED_SIGNERS_B64=$AllowedSignersB64" `
       -e "SSH_PUBLIC_KEYS=$SshPublicKeys" `
       -e "SUDO_NOPASSWD=$SudoNoPasswd" `
       -e "UBUNTU_ISO_SHA256=$UbuntuIsoSha256" `
