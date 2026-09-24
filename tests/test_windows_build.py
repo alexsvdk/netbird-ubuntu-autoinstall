@@ -41,6 +41,8 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn('print("\\x1f".join(', BUNDLE)
         self.assertIn("--retry 5 --retry-all-errors", BUNDLE)
         self.assertIn('"--showformat=${Package}\\n${Version}\\n${Architecture}\\n"', BUNDLE)
+        self.assertIn('nvidia_prefix = "linux-modules-nvidia-595-open-"', BUNDLE)
+        self.assertIn('linux-image-"):]', BUNDLE)
 
     def test_batch_entrypoint_uses_powershell_script(self) -> None:
         self.assertIn("build-autoinstall-iso.ps1", BATCH)

@@ -369,18 +369,19 @@ for prefix in required_prefixes:
         raise SystemExit(f"Error: resolved NVIDIA kernel closure lacks {prefix}*")
 
 kernel_versions = {
-    package["version"]
+    package["name"][len("linux-image-"):]
     for package in lock["packages"]
     if package["name"].startswith("linux-image-") and package["name"] != "linux-image-generic"
 }
+nvidia_prefix = "linux-modules-nvidia-595-open-"
 nvidia_module_versions = {
-    package["version"]
+    package["name"][len(nvidia_prefix):]
     for package in lock["packages"]
-    if package["name"].startswith("linux-modules-nvidia-595-open-")
+    if package["name"].startswith(nvidia_prefix)
     and package["name"] != "linux-modules-nvidia-595-open-generic"
 }
 if not kernel_versions.intersection(nvidia_module_versions):
-    raise SystemExit("Error: NVIDIA kernel module version does not match a locked Linux image version.")
+    raise SystemExit("Error: NVIDIA kernel module ABI does not match a locked Linux image ABI.")
 Path(lock_path).write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 PY
 
