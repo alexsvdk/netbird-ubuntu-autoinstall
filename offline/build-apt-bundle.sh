@@ -362,7 +362,6 @@ names = {package["name"] for package in lock["packages"]}
 required_prefixes = (
     "linux-image-",
     "linux-modules-",
-    "linux-modules-extra-",
     "linux-modules-nvidia-595-open-",
 )
 for prefix in required_prefixes:
