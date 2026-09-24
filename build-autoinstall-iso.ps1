@@ -82,7 +82,10 @@ function Assert-Tool([string]$cmdName) {
 Assert-Tool "docker"
 
 function Test-DockerDaemon {
-    & docker info --format '{{.ServerVersion}}' >$null 2>$null
+    # Windows PowerShell 5.1 turns native stderr into an ErrorRecord. Keep
+    # that record inside the pipeline so the global Stop preference cannot abort.
+    $ErrorActionPreference = "Continue"
+    & docker info --format '{{.ServerVersion}}' 2>&1 | Out-Null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -99,7 +102,8 @@ function Ensure-DockerDaemon {
 
     # Docker Desktop's CLI is available in recent releases. Keep a fallback for
     # older installations and for Windows PowerShell 5.1.
-    & docker desktop start >$null 2>$null
+    $ErrorActionPreference = "Continue"
+    & docker desktop start 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { $startRequested = $true }
 
     if (-not $startRequested) {
