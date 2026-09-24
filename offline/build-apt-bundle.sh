@@ -192,7 +192,7 @@ for name, repository in repositories.items():
     print("\x1f".join((name, repository["repository"], repository["suite"], repository["component"], repository["key_url"])))
 PY
     keyring="/usr/share/keyrings/samovar-${name}.gpg"
-    curl -fsSL "$key_url" | gpg --dearmor --yes -o "$keyring"
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 120 "$key_url" | gpg --dearmor --yes -o "$keyring"
     if [[ "$suite" == "/" ]]; then
       printf 'deb [signed-by=%s] %s /\n' "$keyring" "$repository" >"/etc/apt/sources.list.d/samovar-${name}.list"
     else
