@@ -252,6 +252,20 @@ class TestValidateConfigFileSecretRedaction(unittest.TestCase):
         for error in result.errors:
             self.assertNotIn(proxy_secret, error, f"proxy password leaked into error message: {error}")
 
+    def test_crlf_config_is_normalized_before_signature_verification(self) -> None:
+        cfg_path, sig_path = _make_files(self.tmp.name, VALID_CONFIG)
+        config_bytes = Path(cfg_path).read_bytes().replace(b'",', b'",\r\n')
+        Path(cfg_path).write_bytes(config_bytes)
+        seen = {}
+
+        def capture(raw, sig, signers):
+            seen["raw"] = raw
+            return True
+
+        result = validate_config_file(cfg_path, sig_path, self.signers, verify_sig_fn=capture)
+        self.assertTrue(result.ok)
+        self.assertNotIn(b"\r", seen["raw"])
+
     def test_validate_config_file_bad_path_raises(self) -> None:
         """Bad path should produce a non-ok result, not crash the process."""
         result = validate_config_file(

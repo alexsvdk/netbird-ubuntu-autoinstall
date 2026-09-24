@@ -175,7 +175,7 @@ def validate_config_file(
 
     # 2. JSON parsing
     try:
-        raw = cfg_file.read_bytes()
+        raw = cfg_file.read_bytes().replace(b"\r\n", b"\n")
         data = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         result.add_error(f"Invalid JSON: {exc}")
