@@ -82,7 +82,7 @@ function Assert-Tool([string]$cmdName) {
 Assert-Tool "docker"
 
 function Test-DockerDaemon {
-    & docker info --format '{{.ServerVersion}}' >$null 2>&1
+    & docker info --format '{{.ServerVersion}}' >$null 2>$null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -99,7 +99,7 @@ function Ensure-DockerDaemon {
 
     # Docker Desktop's CLI is available in recent releases. Keep a fallback for
     # older installations and for Windows PowerShell 5.1.
-    & docker desktop start >$null 2>&1
+    & docker desktop start >$null 2>$null
     if ($LASTEXITCODE -eq 0) { $startRequested = $true }
 
     if (-not $startRequested) {

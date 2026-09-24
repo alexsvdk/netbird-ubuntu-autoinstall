@@ -13,6 +13,8 @@ class TestWindowsDockerPreflight(unittest.TestCase):
     def test_powershell_checks_and_starts_docker_desktop(self) -> None:
         self.assertIn("function Test-DockerDaemon", POWERSHELL)
         self.assertIn("& docker info --format", POWERSHELL)
+        self.assertIn("2>$null", POWERSHELL)
+        self.assertNotIn("docker info --format '{{.ServerVersion}}' >$null 2>&1", POWERSHELL)
         self.assertIn("& docker desktop start", POWERSHELL)
         self.assertIn('Docker\\Docker\\Docker Desktop.exe', POWERSHELL)
         self.assertIn("Start-Sleep -Seconds 2", POWERSHELL)
