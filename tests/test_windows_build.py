@@ -12,6 +12,7 @@ BATCH = (ROOT / "build-autoinstall-iso.bat").read_text(encoding="utf-8")
 class TestWindowsDockerPreflight(unittest.TestCase):
     def test_powershell_checks_and_starts_docker_desktop(self) -> None:
         self.assertIn("function Test-DockerDaemon", POWERSHELL)
+        self.assertIn("function Test-DockerImage", POWERSHELL)
         self.assertIn("& docker info --format", POWERSHELL)
         self.assertIn("$ErrorActionPreference = \"Continue\"", POWERSHELL)
         self.assertIn("2>&1 | Out-Null", POWERSHELL)
@@ -26,6 +27,12 @@ class TestWindowsDockerPreflight(unittest.TestCase):
             POWERSHELL.index("Ensure-DockerDaemon"),
             POWERSHELL.index("This creates a FULLY UNATTENDED installer."),
         )
+
+    def test_bundle_script_is_mounted_as_a_file(self) -> None:
+        self.assertIn(".autoinstall-bundle.tmp.sh", POWERSHELL)
+        self.assertIn("bash /work/.autoinstall-bundle.tmp.sh", POWERSHELL)
+        self.assertNotIn("$BuilderImage bash -euc $bundleScript", POWERSHELL)
+        self.assertIn("Remove-Item $bundleScriptPath", POWERSHELL)
 
     def test_batch_entrypoint_uses_powershell_script(self) -> None:
         self.assertIn("build-autoinstall-iso.ps1", BATCH)

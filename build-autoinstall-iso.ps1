@@ -89,6 +89,12 @@ function Test-DockerDaemon {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Test-DockerImage([string]$image) {
+    $ErrorActionPreference = "Continue"
+    & docker image inspect $image 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Ensure-DockerDaemon {
     if (Test-DockerDaemon) { return }
 
@@ -618,6 +624,7 @@ $DockerWorkDir = $WorkDir.Replace('\', '/')
 
 $step1Path = Join-Path $WorkDir ".autoinstall-step1.tmp.sh"
 $step2Path = Join-Path $WorkDir ".autoinstall-step2.tmp.sh"
+$bundleScriptPath = Join-Path $WorkDir ".autoinstall-bundle.tmp.sh"
 
 try {
         Write-Host "Offline bundle: refresh=$OfflineBundleRefresh"
@@ -626,8 +633,7 @@ try {
         # Target builder container matches target release: ubuntu:26.04
         $BuilderImage = "ubuntu:$UbuntuSeries"
         if ($OfflineBundleRefresh -eq "never") {
-            & docker image inspect $BuilderImage >$null 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            if (-not (Test-DockerImage $BuilderImage)) {
                 Write-Error "Error: builder image $BuilderImage is not available locally and OFFLINE_BUNDLE_REFRESH=never."
                 exit 1
             }
@@ -737,13 +743,18 @@ bash /work/offline/build-apt-bundle.sh \
     "/work/$OFFLINE_BUNDLE_CACHE" \
     "$OFFLINE_BUNDLE_REFRESH"
 '@
+        [System.IO.File]::WriteAllText(
+            $bundleScriptPath,
+            ($bundleScript -replace "`r`n", "`n"),
+            $Utf8NoBom
+        )
         & docker run --rm `
             --platform "linux/$Arch" `
             -e "OFFLINE_BUNDLE_CACHE=$OfflineBundleCache" `
             -e "OFFLINE_BUNDLE_REFRESH=$OfflineBundleRefresh" `
             -v "${DockerWorkDir}:/work" `
             -w /work `
-            $BuilderImage bash -euc $bundleScript
+            $BuilderImage bash /work/.autoinstall-bundle.tmp.sh
         if ($LASTEXITCODE -ne 0) {
                 Write-Error "Failed to prepare offline APT bundle."
                 exit 1
@@ -1021,4 +1032,5 @@ python3 /work/validate-autoinstall-iso.py \
 finally {
     if (Test-Path $step1Path) { Remove-Item $step1Path -Force -ErrorAction SilentlyContinue }
     if (Test-Path $step2Path) { Remove-Item $step2Path -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $bundleScriptPath) { Remove-Item $bundleScriptPath -Force -ErrorAction SilentlyContinue }
 }
