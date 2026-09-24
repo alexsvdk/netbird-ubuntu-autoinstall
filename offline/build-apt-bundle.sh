@@ -192,7 +192,16 @@ for name, repository in repositories.items():
     print("\x1f".join((name, repository["repository"], repository["suite"], repository["component"], repository["key_url"])))
 PY
     keyring="/usr/share/keyrings/samovar-${name}.gpg"
-    curl --http1.1 -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 120 "$key_url" | gpg --dearmor --yes -o "$keyring"
+    key_file="$WORK_DIR/${name}.key"
+    if ! curl --http1.1 -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 120 -o "$key_file" "$key_url"; then
+      fallback_key="/work/offline/keys/${name}.asc"
+      if [[ ! -s "$fallback_key" ]]; then
+        echo "Error: cannot download APT key for $name and no pinned fallback exists." >&2
+        exit 1
+      fi
+      cp "$fallback_key" "$key_file"
+    fi
+    gpg --dearmor --yes -o "$keyring" "$key_file"
     if [[ "$suite" == "/" ]]; then
       printf 'deb [signed-by=%s] %s /\n' "$keyring" "$repository" >"/etc/apt/sources.list.d/samovar-${name}.list"
     else

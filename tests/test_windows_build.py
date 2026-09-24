@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 POWERSHELL = (ROOT / "build-autoinstall-iso.ps1").read_text(encoding="utf-8")
 BUNDLE = (ROOT / "offline" / "build-apt-bundle.sh").read_text(encoding="utf-8")
+NVIDIA_KEY = (ROOT / "offline" / "keys" / "nvidia-container-toolkit.asc").read_text(encoding="ascii")
 BATCH = (ROOT / "build-autoinstall-iso.bat").read_text(encoding="utf-8")
 
 
@@ -48,6 +49,8 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn('"--showformat=${Package}\\n${Version}\\n${Architecture}\\n"', BUNDLE)
         self.assertIn('nvidia_prefix = "linux-modules-nvidia-595-open-"', BUNDLE)
         self.assertIn('linux-image-"):]', BUNDLE)
+        self.assertIn('fallback_key="/work/offline/keys/${name}.asc"', BUNDLE)
+        self.assertIn("BEGIN PGP PUBLIC KEY BLOCK", NVIDIA_KEY)
 
     def test_batch_entrypoint_uses_powershell_script(self) -> None:
         self.assertIn("build-autoinstall-iso.ps1", BATCH)
