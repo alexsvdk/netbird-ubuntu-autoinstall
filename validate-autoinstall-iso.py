@@ -103,9 +103,24 @@ def validate_yaml(path: Path) -> None:
         storage_str = yaml.safe_dump(autoinstall.get("storage", {}))
         if "largest" in storage_str:
             fail("Samovar storage must not use size: largest matching.")
-        for serial in ("50026B7683695BFE", "TD2023102401304", "WCC3F1336131"):
-            if serial not in storage_str:
-                fail(f"Samovar storage missing required disk serial: {serial}")
+        expected_disks = (
+            ("__SAMOVAR_SYSTEM_SERIAL__", "50026B7683695BFE"),
+            ("__SAMOVAR_DATA_SERIAL__", "TD2023102401304"),
+            ("__SAMOVAR_ARCHIVE_SERIAL__", "WCC3F1336131"),
+        )
+        early_commands_str = "\n".join(
+            part
+            for command in autoinstall.get("early-commands", [])
+            for part in (command if isinstance(command, list) else [command])
+            if isinstance(part, str)
+        )
+        for placeholder, short_serial in expected_disks:
+            if placeholder not in storage_str:
+                fail(f"Samovar storage missing serial placeholder: {placeholder}")
+            if f"resolve_full_serial {short_serial} {placeholder}" not in early_commands_str:
+                fail(f"Samovar preflight does not resolve required disk serial: {short_serial}")
+        if "^ID_SERIAL_SHORT=" not in early_commands_str or "^ID_SERIAL=" not in early_commands_str:
+            fail("Samovar preflight must resolve full disk serials from udev properties.")
 
         provision = files.get("/usr/local/sbin/samovar-provision.sh", "")
         if not provision:
