@@ -59,10 +59,8 @@ cp .env.example .env
 # Режим Samovar (включается автоматически при наличии samovar-config.json)
 SAMOVAR_MODE=samovar
 
-# Необязательно: префикс serial, который добавляет QEMU.
-# Для физического сервера строку не задавать.
-# Для VM с QEMU IDE-дисками:
-DISK_SERIAL_PREFIX=QEMU_HARDDISK_
+# Префикс serial для QEMU или физического диска не нужен: установщик
+# сам сопоставляет короткий ID с единственным полным ID_SERIAL.
 
 # Размер каждого из двух swap-файлов в GiB (по умолчанию 1)
 # SWAP_SIZE_GIB=8

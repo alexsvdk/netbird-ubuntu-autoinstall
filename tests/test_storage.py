@@ -149,11 +149,10 @@ def _yaml_text_from_structure(storage: dict) -> str:
     return yaml.dump(storage, default_flow_style=False)
 
 
-def _get_rendered_yaml(disk_serial_prefix: str = "", swap_size_gib: str = "1") -> str | None:
+def _get_rendered_yaml(swap_size_gib: str = "1") -> str | None:
     """Run render-autoinstall.py with mock env vars in samovar mode; return stdout or None."""
     env = os.environ.copy()
     env.update({
-        "DISK_SERIAL_PREFIX": disk_serial_prefix,
         "SWAP_SIZE_GIB": swap_size_gib,
         "SAMOVAR_MODE": "samovar",
         "HOSTNAME": "samovar",
@@ -383,19 +382,25 @@ class TestRenderedStorageYaml(unittest.TestCase):
         self._skip_if_no_rendered()
         self.assertIn("autoinstall:", self.rendered)
 
-    def test_rendered_yaml_uses_unprefixed_serials_by_default(self) -> None:
+    def test_rendered_yaml_uses_serial_placeholders(self) -> None:
         self._skip_if_no_rendered()
         assert self.rendered is not None
-        self.assertIn("serial: 50026B7683695BFE", self.rendered)
-        self.assertIn("for serial in 50026B7683695BFE", self.rendered)
+        self.assertIn("serial: __SAMOVAR_SYSTEM_SERIAL__", self.rendered)
+        self.assertIn("serial: __SAMOVAR_DATA_SERIAL__", self.rendered)
+        self.assertIn("serial: __SAMOVAR_ARCHIVE_SERIAL__", self.rendered)
 
-    def test_rendered_yaml_supports_vm_disk_serial_prefix(self) -> None:
-        rendered = _get_rendered_yaml("QEMU_HARDDISK_")
-        self.assertIsNotNone(rendered)
-        assert rendered is not None
-        self.assertIn("serial: QEMU_HARDDISK_50026B7683695BFE", rendered)
-        self.assertIn("for serial in 50026B7683695BFE", rendered)
-        self.assertNotIn("for serial in QEMU_HARDDISK_50026B7683695BFE", rendered)
+    def test_preflight_resolves_full_serials_from_short_serials(self) -> None:
+        self._skip_if_no_rendered()
+        assert self.rendered is not None
+        document = yaml.safe_load(self.rendered)
+        preflight = document["autoinstall"]["early-commands"][1][2]
+        self.assertIn("resolve_full_serial 50026B7683695BFE __SAMOVAR_SYSTEM_SERIAL__", preflight)
+        self.assertIn("^ID_SERIAL_SHORT=", preflight)
+        self.assertIn("^ID_SERIAL=", preflight)
+        self.assertIn('[ -n "$actual_full" ] || actual_full="$actual_short"', preflight)
+        self.assertIn('*"$short_serial")', preflight)
+        self.assertIn('sed "s|^      serial: $placeholder$|      serial: $full_serial|" /autoinstall.yaml > "$tmp_config"', preflight)
+        self.assertNotIn("DISK_SERIAL_PREFIX", self.rendered)
 
     def test_rendered_yaml_uses_configured_swap_size(self) -> None:
         rendered = _get_rendered_yaml(swap_size_gib="8")
@@ -404,14 +409,58 @@ class TestRenderedStorageYaml(unittest.TestCase):
         self.assertIn("create_swap_file /swapfile 8", rendered)
         self.assertIn("create_swap_file /data/swapfile 8", rendered)
 
-    def test_preflight_matches_udev_short_serial(self) -> None:
-        rendered = _get_rendered_yaml("QEMU_HARDDISK_")
-        self.assertIsNotNone(rendered)
-        assert rendered is not None
-        self.assertIn("udevadm", rendered)
-        self.assertIn("^ID_SERIAL_SHORT=", rendered)
-        self.assertNotIn("^ID_SERIAL=", rendered)
-        self.assertNotIn("grep -c", rendered)
+    def test_preflight_substitutes_full_serials_before_curtin(self) -> None:
+        self._skip_if_no_rendered()
+        assert self.rendered is not None
+        document = yaml.safe_load(self.rendered)
+        command = document["autoinstall"]["early-commands"][1][2]
+        script = command.split("PREFLIGHT_EOF'\n", 1)[1].rsplit("PREFLIGHT_EOF", 1)[0]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            config = tmp / "autoinstall.yaml"
+            config.write_text(
+                "      serial: __SAMOVAR_SYSTEM_SERIAL__\n"
+                "      serial: __SAMOVAR_DATA_SERIAL__\n"
+                "      serial: __SAMOVAR_ARCHIVE_SERIAL__\n"
+            )
+            tools = tmp / "bin"
+            tools.mkdir()
+            (tools / "lsblk").write_text(
+                "#!/bin/sh\nprintf '%s\\n' 'sda disk' 'sdb disk' 'sdc disk'\n"
+            )
+            (tools / "udevadm").write_text(
+                "#!/bin/sh\n"
+                "for argument; do device=$argument; done\n"
+                "case $device in\n"
+                "  /dev/sda) printf '%s\\n' 'ID_SERIAL_SHORT=50026B7683695BFE' 'ID_SERIAL=QEMU_HARDDISK_50026B7683695BFE' ;;\n"
+                "  /dev/sdb) printf '%s\\n' 'ID_SERIAL_SHORT=TD2023102401304' 'ID_SERIAL=ATA_SBSSD240_TD2023102401304' ;;\n"
+                "  /dev/sdc) printf '%s\\n' 'ID_SERIAL_SHORT=WCC3F1336131' 'ID_SERIAL=WDC_WD10EZEX_WCC3F1336131' ;;\n"
+                "esac\n"
+            )
+            for tool in tools.iterdir():
+                tool.chmod(0o755)
+
+            script = script.replace("/autoinstall.yaml", str(config))
+            script = script.replace("/run/samovar-autoinstall.yaml", str(tmp / "resolved-autoinstall.yaml"))
+            script = script.replace("/run/samovar-preflight.log", str(tmp / "preflight.log"))
+            script = script.replace("[ -d /sys/firmware/efi ] || { echo 'ERROR: Not in UEFI mode'; exit 1; }", ":")
+            script = script.replace("uname -m | grep -q x86_64 || { echo 'ERROR: Not x86_64'; exit 1; }", ":")
+            result = subprocess.run(
+                ["bash", "-c", script],
+                text=True,
+                capture_output=True,
+                env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}"},
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                config.read_text(),
+                "      serial: QEMU_HARDDISK_50026B7683695BFE\n"
+                "      serial: ATA_SBSSD240_TD2023102401304\n"
+                "      serial: WDC_WD10EZEX_WCC3F1336131\n",
+            )
 
     def test_rendered_yaml_has_poweroff(self) -> None:
         self._skip_if_no_rendered()

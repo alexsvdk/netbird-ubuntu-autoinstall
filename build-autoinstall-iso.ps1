@@ -600,7 +600,6 @@ $AptMirror = if ($env:APT_MIRROR) { $env:APT_MIRROR } else { "" }
 $AptSecurityMirror = if ($env:APT_SECURITY_MIRROR) { $env:APT_SECURITY_MIRROR } else { "" }
 $AptFallback = if ($env:APT_FALLBACK) { $env:APT_FALLBACK } else { "offline-install" }
 $NetworkInterface = if ($env:NETWORK_INTERFACE) { $env:NETWORK_INTERFACE } else { "both" }
-$DiskSerialPrefix = if ($null -ne $env:DISK_SERIAL_PREFIX) { $env:DISK_SERIAL_PREFIX } else { "" }
 $SwapSizeGib = if ($env:SWAP_SIZE_GIB) { $env:SWAP_SIZE_GIB } else { "1" }
 $NotifyTopic = if ($env:NOTIFY_TOPIC) { $env:NOTIFY_TOPIC } else { "samovar_test" }
 $MihomoImage = if ($env:MIHOMO_IMAGE) { $env:MIHOMO_IMAGE } else { "metacubex/mihomo:latest" }
@@ -938,7 +937,6 @@ trap - EXIT
       -e "APT_SECURITY_MIRROR=$AptSecurityMirror" `
       -e "APT_FALLBACK=$AptFallback" `
       -e "NETWORK_INTERFACE=$NetworkInterface" `
-      -e "DISK_SERIAL_PREFIX=$DiskSerialPrefix" `
       -e "SWAP_SIZE_GIB=$SwapSizeGib" `
       -e "NOTIFY_TOPIC=$NotifyTopic" `
       -e "MIHOMO_IMAGE=$MihomoImage" `

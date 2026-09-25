@@ -404,25 +404,19 @@ WantedBy=multi-user.target
 # Samovar disk serials
 # ---------------------------------------------------------------------------
 
-# Some virtual controllers expose a disk serial with a model prefix, for
-# example QEMU_HARDDISK_50026B7683695BFE.  Keep the physical target default
-# unchanged and allow VM builds to opt into that prefix explicitly.
-DISK_SERIAL_PREFIX = os.environ.get("DISK_SERIAL_PREFIX", "")
-if not re.fullmatch(r"[A-Za-z0-9_.-]*", DISK_SERIAL_PREFIX):
-    fail("DISK_SERIAL_PREFIX may contain only letters, digits, '_', '-', and '.'.")
-
 SWAP_SIZE_GIB = os.environ.get("SWAP_SIZE_GIB", "1").strip()
 if not re.fullmatch(r"[1-9][0-9]*", SWAP_SIZE_GIB):
     fail("SWAP_SIZE_GIB must be a positive integer number of GiB.")
 
+# These hardware serials are stable across physical and virtual controllers.
+# Early commands resolve their full ID_SERIAL values before Curtin runs.
 SYSTEM_SSD_SERIAL_SHORT = "50026B7683695BFE"  # Kingston 240GB - root
 DATA_SSD_SERIAL_SHORT   = "TD2023102401304"    # SBSSD 240GB   - /data
 HDD_SERIAL_SHORT        = "WCC3F1336131"       # WD 1TB        - /archive
 
-# Curtin matches the full udev serial. QEMU adds a model prefix to it.
-SYSTEM_SSD_SERIAL = f"{DISK_SERIAL_PREFIX}{SYSTEM_SSD_SERIAL_SHORT}"
-DATA_SSD_SERIAL   = f"{DISK_SERIAL_PREFIX}{DATA_SSD_SERIAL_SHORT}"
-HDD_SERIAL        = f"{DISK_SERIAL_PREFIX}{HDD_SERIAL_SHORT}"
+SYSTEM_SSD_SERIAL = "__SAMOVAR_SYSTEM_SERIAL__"
+DATA_SSD_SERIAL   = "__SAMOVAR_DATA_SERIAL__"
+HDD_SERIAL        = "__SAMOVAR_ARCHIVE_SERIAL__"
 
 # ---------------------------------------------------------------------------
 # Samovar storage config
@@ -521,19 +515,46 @@ echo 'Samovar preflight: checking hardware...'
 [ -d /sys/firmware/efi ] || {{ echo 'ERROR: Not in UEFI mode'; exit 1; }}
 # Check arch
 uname -m | grep -q x86_64 || {{ echo 'ERROR: Not x86_64'; exit 1; }}
-# Check udev short serials — each must appear exactly once.
-# The storage layout uses full serials because Curtin matches ID_SERIAL. Check
-# the unprefixed IDs here because QEMU adds a model prefix only to ID_SERIAL.
-for serial in {SYSTEM_SSD_SERIAL_SHORT} {DATA_SSD_SERIAL_SHORT} {HDD_SERIAL_SHORT}; do
+# Curtin prefers full ID_SERIAL values, whose model prefix differs between
+# physical hardware and QEMU. Resolve each configured short serial to exactly
+# one full serial, then replace only its storage entry before Curtin runs.
+resolve_full_serial() {{
+  short_serial="$1"
+  placeholder="$2"
   count=0
+  full_serial=""
+
   while read -r dev; do
-        actual=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL_SHORT=//p')
-    if [ "$actual" = "$serial" ]; then
-      count=$((count + 1))
+    actual_short=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL_SHORT=//p')
+    actual_full=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL=//p')
+    [ -n "$actual_full" ] || actual_full="$actual_short"
+    if [ "$actual_short" = "$short_serial" ]; then
+      case "$actual_full" in
+        *"$short_serial")
+          count=$((count + 1))
+          full_serial="$actual_full"
+          ;;
+      esac
     fi
   done < <(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2 == "disk" {{print "/dev/" $1}}')
-  [ "$count" -eq 1 ] || {{ echo "ERROR: Serial $serial found $count times (expected 1)"; exit 1; }}
-done
+
+  [ "$count" -eq 1 ] || {{ echo "ERROR: Short serial $short_serial resolved to $count full serials (expected 1)"; exit 1; }}
+  case "$full_serial" in
+    ""|*[!A-Za-z0-9_.-]*)
+      echo "ERROR: Resolved serial for $short_serial contains unsupported characters"
+      exit 1
+      ;;
+  esac
+  placeholder_count=$(grep -Fxc "      serial: $placeholder" /autoinstall.yaml || true)
+  [ "$placeholder_count" -eq 1 ] || {{ echo "ERROR: Storage placeholder $placeholder found $placeholder_count times (expected 1)"; exit 1; }}
+  tmp_config="/run/samovar-autoinstall.yaml"
+  sed "s|^      serial: $placeholder$|      serial: $full_serial|" /autoinstall.yaml > "$tmp_config"
+  mv "$tmp_config" /autoinstall.yaml
+}}
+
+resolve_full_serial {SYSTEM_SSD_SERIAL_SHORT} {SYSTEM_SSD_SERIAL}
+resolve_full_serial {DATA_SSD_SERIAL_SHORT} {DATA_SSD_SERIAL}
+resolve_full_serial {HDD_SERIAL_SHORT} {HDD_SERIAL}
 echo 'Samovar preflight: all checks passed'
 exit 0
 """
