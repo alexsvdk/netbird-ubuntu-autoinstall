@@ -65,7 +65,9 @@ command -v curl >/dev/null
 mkdir -p "$CACHE_DIR"
 
 # 1. Mihomo container image
+previous_image_id="$(docker image inspect "$IMAGE_REF" --format '{{.Id}}' 2>/dev/null || true)"
 docker pull --platform linux/amd64 "$IMAGE_REF" >/dev/null
+current_image_id="$(docker image inspect "$IMAGE_REF" --format '{{.Id}}')"
 DIGEST_REF="$(docker image inspect "$IMAGE_REF" --format '{{index .RepoDigests 0}}')"
 if [[ -z "$DIGEST_REF" || "$DIGEST_REF" != *@sha256:* ]]; then
   echo "Error: Docker did not report an immutable digest for $IMAGE_REF." >&2
@@ -130,4 +132,8 @@ Path(lock_path).write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 PY
 
 verify_lock
+if [[ "$previous_image_id" =~ ^sha256:[0-9a-f]{64}$ && "$previous_image_id" != "$current_image_id" ]]; then
+  # Do not force removal: Docker keeps it if another tag or container uses it.
+  docker image rm "$previous_image_id" >/dev/null 2>&1 || true
+fi
 echo "Locked Mihomo OCI and GeoIP artifacts ready: $CACHE_DIR"

@@ -339,6 +339,12 @@ class PublicKitTests(unittest.TestCase):
         self.assertIn("-e OFFLINE_BUNDLE_CACHE=\"$OFFLINE_BUNDLE_CACHE\"", shell)
         self.assertIn("-e OFFLINE_BUNDLE_REFRESH=\"$OFFLINE_BUNDLE_REFRESH\"", shell)
         self.assertIn("/samovar-offline-artifacts/mihomo-image.tar", shell)
+        helper_text = helper.read_text(encoding="utf-8")
+        self.assertIn("prune_download_cache", helper_text)
+        self.assertLess(helper_text.rindex("verify_locked_repository"), helper_text.rindex("prune_download_cache"))
+        artifact_text = artifact_helper.read_text(encoding="utf-8")
+        self.assertIn("previous_image_id", artifact_text)
+        self.assertIn('docker image rm "$previous_image_id"', artifact_text)
 
     def test_build_script_bash_syntax(self) -> None:
         result = subprocess.run(

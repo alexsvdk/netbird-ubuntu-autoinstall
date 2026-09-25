@@ -31,6 +31,9 @@ class TestWindowsDockerPreflight(unittest.TestCase):
         self.assertIn("retrying with anonymous credentials", POWERSHELL)
         self.assertIn("docker-credential-desktop.cmd", POWERSHELL)
         self.assertIn("$pullExitCode", POWERSHELL)
+        self.assertIn("function Get-DockerImageId", POWERSHELL)
+        self.assertIn("function Remove-SupersededDockerImage", POWERSHELL)
+        self.assertIn("Removing superseded Docker image", POWERSHELL)
 
     def test_preflight_runs_before_the_build(self) -> None:
         self.assertLess(

@@ -100,6 +100,23 @@ function Test-DockerImage([string]$image) {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Get-DockerImageId([string]$image) {
+    $ErrorActionPreference = "Continue"
+    $output = & docker image inspect $image --format '{{.Id}}' 2>&1
+    if ($LASTEXITCODE -ne 0) { return "" }
+    $imageId = ($output | Select-Object -Last 1).ToString().Trim()
+    if ($imageId -match '^sha256:[0-9a-f]{64}$') { return $imageId }
+    return ""
+}
+
+function Remove-SupersededDockerImage([string]$previousImageId, [string]$currentImageId) {
+    if ([string]::IsNullOrWhiteSpace($previousImageId) -or $previousImageId -eq $currentImageId) { return }
+    Write-Host "Removing superseded Docker image $previousImageId..."
+    $ErrorActionPreference = "Continue"
+    # Do not force removal: Docker keeps the image if another tag or container uses it.
+    & docker image rm $previousImageId 2>&1 | Out-Null
+}
+
 function Ensure-DockerDaemon {
     if (Test-DockerDaemon) { return }
 
@@ -800,6 +817,7 @@ bash /tmp/build-apt-bundle.sh \
             }
         } else {
             New-Item -ItemType Directory -Force -Path $artifactCachePath | Out-Null
+            $previousMihomoImageId = Get-DockerImageId $MihomoImage
             & docker pull --platform linux/amd64 $MihomoImage
             $pullExitCode = $LASTEXITCODE
             if ($pullExitCode -ne 0) {
@@ -874,6 +892,7 @@ bash /tmp/build-apt-bundle.sh \
                 )
             }
             [System.IO.File]::WriteAllText($artifactLock, ($artifactManifest | ConvertTo-Json -Depth 5) + "`n", $Utf8NoBom)
+            Remove-SupersededDockerImage $previousMihomoImageId (Get-DockerImageId $MihomoImage)
         }
 
     Write-Host "Generating password hash and autoinstall.yaml..."

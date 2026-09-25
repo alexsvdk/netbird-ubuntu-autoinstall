@@ -117,12 +117,16 @@ embedded key before attempting a network mirror. It never uses `trusted=yes`.
 The persistent cache is ignored by Git. With the default
 `OFFLINE_BUNDLE_REFRESH=auto`, the builder checks APT metadata but reuses cached
 `.deb` files and only downloads packages that are missing or have a newer
-candidate. Use `OFFLINE_BUNDLE_REFRESH=never` to build without contacting APT;
-it verifies all locked SHA-256 values and the signed repository layout.
+candidate. After a successful refresh it removes superseded package archives and
+interrupted partial downloads, so the cache does not grow from old versions. Use
+`OFFLINE_BUNDLE_REFRESH=never` to build without contacting APT; it verifies all
+locked SHA-256 values and the signed repository layout.
 
 Mihomo is cached separately as an OCI image tar. Refresh records its immutable
 registry digest and tar SHA-256 in `offline/images.lock.json`; the target verifies
-the checksum and loads the image into Docker before the Compose service runs.
+the checksum and loads the image into Docker before the Compose service runs. If
+refresh updates the configured image tag, the builder removes only its previous
+unreferenced image ID; it never runs a global Docker prune.
 
 ## Build
 

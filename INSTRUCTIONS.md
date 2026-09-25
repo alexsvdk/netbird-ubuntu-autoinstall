@@ -133,11 +133,14 @@ roots; сборщик разрешает полное дерево зависи�
 `offline/packages.lock.json` с версиями, архитектурами, filenames и SHA-256.
 Внутри ISO размещается подписанный repository `dists/samovar/InRelease` вместе с
 public key. При следующих сборках с `OFFLINE_BUNDLE_REFRESH=auto` повторно
-используются уже скачанные `.deb`; `never` проверяет lock и SHA-256 без сети.
+используются уже скачанные `.deb`; после успешного обновления удаляются старые
+версии пакетов и незавершённые загрузки. `never` проверяет lock и SHA-256 без сети.
 
 Mihomo сохраняется отдельно в `offline/images/<release>-<arch>` как Docker image
 tar. Его `digest` и SHA-256 фиксируются в `offline/images.lock.json`; ISO копирует
-tar в target, а provisioning проверяет checksum и выполняет `docker load`.
+tar в target, а provisioning проверяет checksum и выполняет `docker load`. При
+обновлении тега сборщик удаляет только его прежний незанятый image ID; глобальный
+`docker prune` не запускается.
 
 ---
 

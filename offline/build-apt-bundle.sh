@@ -397,4 +397,28 @@ PY
 rm -rf "$REPOSITORY"
 mv "$STAGING" "$REPOSITORY"
 verify_locked_repository
+
+# The repository now has every selected .deb. Keep its matching download cache
+# for the next refresh, but discard superseded packages and interrupted partials.
+# Otherwise each package update leaves old multi-megabyte archives on the host.
+prune_download_cache() {
+  python3 - "$WORK_DIR/selected.json" "$DOWNLOADS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+selected_path, downloads_path = map(Path, sys.argv[1:])
+selected = json.loads(selected_path.read_text(encoding="utf-8"))
+active = {Path(package["source"]).resolve() for package in selected}
+for archive in downloads_path.glob("*.deb"):
+    if archive.resolve() not in active:
+        archive.unlink()
+partial_dir = downloads_path / "partial"
+if partial_dir.is_dir():
+    for partial in partial_dir.iterdir():
+        if partial.is_file():
+            partial.unlink()
+PY
+}
+prune_download_cache
 echo "Signed offline APT bundle ready: $REPOSITORY"
