@@ -383,12 +383,19 @@ class TestRenderedStorageYaml(unittest.TestCase):
         self._skip_if_no_rendered()
         self.assertIn("autoinstall:", self.rendered)
 
+    def test_rendered_yaml_uses_unprefixed_serials_by_default(self) -> None:
+        self._skip_if_no_rendered()
+        assert self.rendered is not None
+        self.assertIn("serial: 50026B7683695BFE", self.rendered)
+        self.assertIn("for serial in 50026B7683695BFE", self.rendered)
+
     def test_rendered_yaml_supports_vm_disk_serial_prefix(self) -> None:
         rendered = _get_rendered_yaml("QEMU_HARDDISK_")
         self.assertIsNotNone(rendered)
         assert rendered is not None
         self.assertIn("serial: QEMU_HARDDISK_50026B7683695BFE", rendered)
-        self.assertIn("for serial in QEMU_HARDDISK_50026B7683695BFE", rendered)
+        self.assertIn("for serial in 50026B7683695BFE", rendered)
+        self.assertNotIn("for serial in QEMU_HARDDISK_50026B7683695BFE", rendered)
 
     def test_rendered_yaml_uses_configured_swap_size(self) -> None:
         rendered = _get_rendered_yaml(swap_size_gib="8")

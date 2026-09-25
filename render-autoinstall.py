@@ -415,9 +415,14 @@ SWAP_SIZE_GIB = os.environ.get("SWAP_SIZE_GIB", "1").strip()
 if not re.fullmatch(r"[1-9][0-9]*", SWAP_SIZE_GIB):
     fail("SWAP_SIZE_GIB must be a positive integer number of GiB.")
 
-SYSTEM_SSD_SERIAL = f"{DISK_SERIAL_PREFIX}50026B7683695BFE"  # Kingston 240GB - root
-DATA_SSD_SERIAL   = f"{DISK_SERIAL_PREFIX}TD2023102401304"    # SBSSD 240GB   - /data
-HDD_SERIAL        = f"{DISK_SERIAL_PREFIX}WCC3F1336131"       # WD 1TB        - /archive
+SYSTEM_SSD_SERIAL_SHORT = "50026B7683695BFE"  # Kingston 240GB - root
+DATA_SSD_SERIAL_SHORT   = "TD2023102401304"    # SBSSD 240GB   - /data
+HDD_SERIAL_SHORT        = "WCC3F1336131"       # WD 1TB        - /archive
+
+# Curtin matches the full udev serial. QEMU adds a model prefix to it.
+SYSTEM_SSD_SERIAL = f"{DISK_SERIAL_PREFIX}{SYSTEM_SSD_SERIAL_SHORT}"
+DATA_SSD_SERIAL   = f"{DISK_SERIAL_PREFIX}{DATA_SSD_SERIAL_SHORT}"
+HDD_SERIAL        = f"{DISK_SERIAL_PREFIX}{HDD_SERIAL_SHORT}"
 
 # ---------------------------------------------------------------------------
 # Samovar storage config
@@ -517,9 +522,9 @@ echo 'Samovar preflight: checking hardware...'
 # Check arch
 uname -m | grep -q x86_64 || {{ echo 'ERROR: Not x86_64'; exit 1; }}
 # Check udev short serials — each must appear exactly once.
-# The storage layout and configured values use ID_SERIAL_SHORT. ID_SERIAL can
-# include a model prefix, so it must not be compared to these bare serials.
-for serial in {SYSTEM_SSD_SERIAL} {DATA_SSD_SERIAL} {HDD_SERIAL}; do
+# The storage layout uses full serials because Curtin matches ID_SERIAL. Check
+# the unprefixed IDs here because QEMU adds a model prefix only to ID_SERIAL.
+for serial in {SYSTEM_SSD_SERIAL_SHORT} {DATA_SSD_SERIAL_SHORT} {HDD_SERIAL_SHORT}; do
   count=0
   while read -r dev; do
         actual=$(udevadm info -q property -n "$dev" 2>/dev/null | sed -n 's/^ID_SERIAL_SHORT=//p')
